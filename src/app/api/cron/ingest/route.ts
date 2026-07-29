@@ -28,7 +28,12 @@ const MAX_SEARCH_PAGES = 10;
 // 1回の cron 実行で再試行するノート数の上限。無制限にすると1回の実行がいつまでも終わらない。
 const RETRY_DRAIN_LIMIT = 50;
 
-export async function POST(req: Request): Promise<Response> {
+/**
+ * Vercel cron は登録した path を **GET** で叩く（メソッドの指定はできない）。
+ * そのため GET が本体でなければ 405 になり、ジョブが一度も発火しない。
+ * POST は手動実行・デバッグ用に同じ処理へ割り当てておく。
+ */
+export async function GET(req: Request): Promise<Response> {
   return runCronJob("ingest", req, async () => {
     await ensureMigrated();
 
@@ -162,3 +167,6 @@ export async function POST(req: Request): Promise<Response> {
     return stats;
   });
 }
+
+/** 手動実行・デバッグ用。cron 発火は GET 側。 */
+export const POST = GET;

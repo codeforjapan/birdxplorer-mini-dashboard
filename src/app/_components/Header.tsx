@@ -24,15 +24,27 @@ export function Header({ periodLabel, totalNotes, updatedAtLabel, monitoringEnde
           }`}
         />
         <span className={monitoringEnded ? "text-label" : "text-accent"}>
-          BirdXplorer 誤情報モニタリング
+          BirdXplorer コミュニティノート観測
         </span>
       </div>
       <h1 className="text-[24px] font-bold tracking-tight text-heading sm:text-[30px]">
-        熊本地震（2026/07/28）誤情報タイムライン
+        コミュニティノートタイムライン 令和8年熊本地震
       </h1>
+      <p className="tabular text-[12px] text-muted sm:text-[13px]">
+        2026年7月28日 16:27 発生（M7.1）
+      </p>
       <p className="text-[12px] text-muted sm:text-[13px]">
         対象期間 {periodLabel} ・ 集計 {formatCount(totalNotes)}件
         {updatedAtLabel ? ` ・ 最終更新 ${updatedAtLabel}` : ""}
+      </p>
+      {/*
+        コミュニティノートは第三者ユーザーの投稿であり、評価不足・有用でないと評価されたノートも
+        収集対象に含まれる。サイト側が元投稿を虚偽と断定しているという誤読を防ぐため、
+        グラフより前に必ず表示する。文言の緩和・削除はしない(spec.md §8-9)。
+      */}
+      <p className="text-[12px] leading-[1.6] text-label">
+        コミュニティノートはXの利用者が投稿し、Xの評価を経て表示されるものです。ノートが付いていることは、
+        元の投稿が誤りであることを意味しません。
       </p>
       {monitoringEnded && (
         <p className="tabular text-[12px] text-label">2026年8月31日で収集を終了しました</p>

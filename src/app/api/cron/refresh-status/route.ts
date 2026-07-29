@@ -16,7 +16,8 @@ export const maxDuration = 180;
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
-export async function POST(req: Request): Promise<Response> {
+/** Vercel cron は GET で発火するため GET が本体（ingest/route.ts の同じ注記を参照）。 */
+export async function GET(req: Request): Promise<Response> {
   return runCronJob("refresh-status", req, async () => {
     await ensureMigrated();
 
@@ -44,3 +45,6 @@ export async function POST(req: Request): Promise<Response> {
     return { targeted: noteIds.length, refreshed: statuses.length };
   });
 }
+
+/** 手動実行・デバッグ用。cron 発火は GET 側。 */
+export const POST = GET;

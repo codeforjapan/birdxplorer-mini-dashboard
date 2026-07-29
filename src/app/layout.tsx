@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "熊本地震（2026/07/28）誤情報タイムライン",
+  title: "コミュニティノートタイムライン 令和8年熊本地震",
   description:
-    "2026年7月28日の熊本地震に関するXコミュニティノートを継続収集し、内容ごとに分類して時系列で可視化する観測サイト。",
+    "令和8年熊本地震（2026年7月28日 16:27 発生・M7.1）に関するXコミュニティノートを継続収集し、内容ごとに分類して時系列で可視化する観測サイト。",
 };
 
 export default function RootLayout({

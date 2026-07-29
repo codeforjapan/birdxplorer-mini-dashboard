@@ -57,7 +57,8 @@ function buildReportClusters(
   return { reportClusters, totalNotes: included.length };
 }
 
-export async function POST(req: Request): Promise<Response> {
+/** Vercel cron は GET で発火するため GET が本体（ingest/route.ts の同じ注記を参照）。 */
+export async function GET(req: Request): Promise<Response> {
   return runCronJob("report", req, async () => {
     await ensureMigrated();
 
@@ -124,3 +125,6 @@ export async function POST(req: Request): Promise<Response> {
     return stats;
   });
 }
+
+/** 手動実行・デバッグ用。cron 発火は GET 側。 */
+export const POST = GET;
