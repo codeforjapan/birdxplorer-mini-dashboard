@@ -1,26 +1,102 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/**
+ * デザイントークン。デザイン仕様書 §2-§4 の値をそのまま写す。
+ * ライトオンリー。ダークテーマは提供しない(仕様として明示的に廃止。design.md §11)。
+ */
+@theme {
+  /* サーフェス */
+  --color-page: #f4f6f8;
+  --color-card: #ffffff;
+  --color-block: #f8fafc;
+  --color-line: #e2e5ea;
+  --color-grid: #edeff2;
+
+  /* テキスト */
+  --color-heading: #0f1419;
+  --color-strong: #1f2937;
+  --color-body: #374151;
+  --color-weak: #4b5563;
+  --color-muted: #6b7280;
+  --color-label: #8892a0;
+  --color-annotation: #9aa3af;
+
+  /* 本震マーカー / 稼働インジケータ専用。警告色として流用しない。 */
+  --color-accent: #e0143c;
+
+  /* クラスタパレット(colorIndex 0-7)。8色が上限(design.md §3)。 */
+  --color-cluster-0: #2a78d6;
+  --color-cluster-1: #eb6834;
+  --color-cluster-2: #1baf7a;
+  --color-cluster-3: #eda100;
+  --color-cluster-4: #e87ba4;
+  --color-cluster-5: #008300;
+  --color-cluster-6: #4a3aa7;
+  --color-cluster-7: #e34948;
+  --color-cluster-other: #94a3b8;
+
+  --font-sans:
+    system-ui, -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", "Hiragino Sans",
+    "Noto Sans JP", Meiryo, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  background: var(--color-page);
+  color-scheme: light;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-page);
+  color: var(--color-body);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 計器としての可読性。等幅の数字幅を揃える。 */
+.tabular {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* アイブロウ行など、等幅・大文字・トラッキング広めの小さいラベル */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+/* 白背景では旧トークン(#E8EAED)は不可視になるため、見出しインクを使う。 */
+:focus-visible {
+  outline: 2px solid var(--color-heading);
+  outline-offset: 2px;
+}
+
+/* 稼働インジケータの明滅。「データが継続収集されている」ことの表現。 */
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.pulse-dot {
+  animation: pulse-dot 2.4s ease-in-out infinite;
+}
+
+/* 計器なので動かさない。移動・スケール変化は使わず、色と不透明度のみ 150ms。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

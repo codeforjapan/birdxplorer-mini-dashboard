@@ -1,0 +1,386 @@
+# 熊本地震 誤情報モニタ — 仕様書 v1.0（確定版）
+
+**確定日**: 2026-07-29
+**関連文書**: 「熊本地震 誤情報モニタ — デザイン仕様書 v2.0」（`docs/design.md`。UI実装はそちらに準拠）
+**目的**: 2026年7月28日の熊本地震を起点に流通した誤情報・撹乱情報についてのXコミュニティノートを継続収集し、LLMで動的にクラスタリングして公開サイトに可視化する。地震という一点の出来事の周辺に、何時間後にどのような誤った情報が湧いたかを読み取れるようにする
+**運用期間**: 公開開始 〜 **2026年8月31日**（以降は自動停止、静的アーカイブとして残置）
+
+---
+
+## 1. 確定した設計判断
+
+| 項目 | 決定 |
+|---|---|
+| 監視スコープ | 熊本地震（2026/07/28）に固定した単一イベントモニタ |
+| ホスティング | Vercel（**Proプラン契約済み** → cron の分間隔発火が可能） |
+| ドメイン | Vercel のデフォルトドメインを使用（独自ドメインなし） |
+| データストア | **Neon Postgres（唯一の真実）＋ Vercel Blob（公開用スナップショット・書き出し専用）**。§5 参照 |
+| データ取得元 | BirdXplorer REST API（認証不要・§3参照） |
+| 分類方式 | LLMによる動的クラスタ発見（固定タクソノミーなし） |
+| クラスタ安定化 | 毎回の増分割当 ＋ **1時間ごと**の全件再編成 |
+| 関連性フィルタ | LLMがスコア0-100を付与。**閾値60未満を除外**（ソフト除外）。評価軸は「地震をめぐる誤情報・撹乱情報を扱っているか」であり、被害への直接言及の有無ではない（§4 Stage 1） |
+| LLM | OpenRouter 経由の `google/gemini-2.5-flash-lite`（Google 直配信・structured outputs 対応・GA 済み。preview 系IDは無人運用中に消える恐れがあるため使わない） |
+| レポート | 全自動生成・人手の確認なし・「AI生成」ラベル常時表示 |
+| レポート更新 | 毎日 **15:00 JST**。日次ダイジェスト ＋ 累積レポートへの継ぎ足し |
+| 公開範囲 | 完全公開 |
+| バックフィル | 2026/07/28 13:00 JST 以降の全件 |
+| 投稿者情報 | 匿名化。該当Xポストへのリンクのみ掲載 |
+| ポスト本文 | 公開サイトには非表示。分類処理にのみ使用し永続化しない |
+| 訂正・削除依頼の窓口 | **設置しない**（確定。受容リスクとして §8-8 に記録） |
+| フロントエンド | `docs/design.md` に準拠 |
+
+---
+
+## 2. システム構成
+
+### 2.1 データフロー
+
+```
+┌─ Cron 10分ごと ─────────────────────────────┐
+│  /api/cron/ingest                           │
+│    1. cursor 以降のノートを取得             │
+│    2. noteId で重複排除（notes の主キー）   │
+│    3. LLM① 関連性スコア判定（閾値60）       │
+│    4. LLM② 既存クラスタへ割当 or 新規提案   │
+│    5. Postgres に保存                       │
+│    6. cursor 前進                           │
+│    7. Blob へスナップショット書き出し       │
+└─────────────────────────────────────────────┘
+
+┌─ Cron 1時間ごと ────────────────────────────┐
+│  /api/cron/recluster                        │
+│    LLM③ クラスタのマージ・リネーム整理      │
+│  /api/cron/refresh-status                   │
+│    直近7日分のノートの評価状態を再取得      │
+└─────────────────────────────────────────────┘
+
+┌─ Cron 毎日 15:00 JST（06:00 UTC）───────────┐
+│  /api/cron/report                           │
+│    LLM④ 過去24時間の日次ダイジェスト生成    │
+│    LLM⑤ 累積レポートに継ぎ足し              │
+│    Blob reports/ 配下に書き出し             │
+└─────────────────────────────────────────────┘
+
+[Frontend] Blob の JSON を fetch（ISR revalidate 600s）
+```
+
+### 2.2 Cron 設定
+
+Vercel Pro のため分間隔の発火が可能。cron 定義は **UTC 指定**である点に注意。
+
+| ジョブ | schedule (UTC) | 意味 |
+|---|---|---|
+| `ingest` | `*/10 * * * *` | 10分ごと |
+| `recluster` | `5 * * * *` | 毎時5分 |
+| `refresh-status` | `35 * * * *` | 毎時35分（recluster と衝突させない） |
+| `report` | `0 6 * * *` | 15:00 JST |
+
+全エンドポイントは `Authorization: Bearer ${CRON_SECRET}` で保護し、Vercel cron 以外からの実行を弾く。
+
+---
+
+## 3. BirdXplorer API
+
+**ベースURL**: `https://dev.api-birdxplorer.code4japan.org`
+**認証**: 不要（OpenAPI に `securitySchemes` の定義なし）
+**レート制限**: 文書化されていない。実測では観測されなかった（§9）が、負荷下の挙動は不明なため指数バックオフを実装する
+
+### 3.1 使用エンドポイント
+
+#### `GET /api/v1/data/search` — メインの取得経路
+
+| パラメータ | 使用値 |
+|---|---|
+| `note_includes_text` | `熊本` / `地震` / `津波`（配列で複数指定） |
+| `note_search_mode` | `or` |
+| `language` | `ja` |
+| `note_created_at_from` | cursor の値（**以上**、inclusive） |
+| `note_created_at_to` | 省略（最新まで） |
+| `sort_field` | `note_created_at` |
+| `sort_order` | `asc` |
+| `limit` | `1000`（上限） |
+| `include_total` | `false`（COUNTをスキップして高速化） |
+
+レスポンスは `SearchResponse`。`data[]` は `SearchedNote`（`post` を内包）、`meta.next` に次ページURLが入る。
+
+#### その他
+
+- `GET /api/v1/data/search/count` — 件数のみ取得（監視・ヘルスチェック用）
+- `GET /api/v1/data/notes?note_ids=...` — 既存ノートの評価状態を再取得（§4 Stage 6）
+- `GET /api/v1/system/ping` — 疎通確認
+
+### 3.2 カーソル設計
+
+`note_created_at_from` と `note_created_at_to` は**どちらも inclusive** である（OpenAPI は `_to` を exclusive と記述しているが誤り。§9.1 #1）。値は epoch ミリ秒。
+
+同一ミリ秒に複数のノートが存在しうるため、`from = 最終処理済み createdAt`（−1ではなく同値）で再取得し、**`noteId` で重複排除する**。取りこぼしより重複取得のほうが安全。境界の扱いを API の inclusive/exclusive に依存させず、クライアント側の重複排除で吸収する設計にしている。
+
+### 3.3 レスポンスから使うフィールド
+
+| パス | 用途 |
+|---|---|
+| `noteId` | 主キー・重複排除 |
+| `summary` | ノート本文（**表示する**） |
+| `createdAt` | タイムライン集計（ms epoch） |
+| `currentStatus` | 評価状態バッジ |
+| `helpfulCount` / `notHelpfulCount` / `rateCount` | 評価数 |
+| `post.link` | **使用しない・保存しない**。実測では `https://x.com/{投稿者の表示名}/status/{postId}` の形式で返り、投稿者の表示名（本名を名乗るアカウントも実在）が URL に埋め込まれるため、匿名化方針（§1）に反する。表示名に `/` を含む個体もあり、その場合はリンクとして壊れる。`postUrl` は `postId` のみから `https://x.com/user/status/{postId}` として組み立てる（§6） |
+| `post.impressionCount` | 拡散規模の指標 |
+| `post.text` | 分類にのみ使用。**永続化しない** |
+| `post.xUser.*` | 一切使用しない・保存しない |
+
+---
+
+## 4. LLMパイプライン
+
+すべて OpenRouter 経由。**JSON Schema 指定がプロバイダ側で無視される場合がある**ため、全ステージで出力のスキーマ検証を行い、失敗時は `retry_queue` テーブルに退避して次回再試行する。
+
+### Stage 1 — 関連性判定（増分・バッチ）
+
+```
+in : { noteId, summary, postText }[]
+out: { noteId, relevance: 0-100, reason: string }[]
+```
+
+**スコアが測るのは「地震をめぐる誤情報・撹乱情報を扱っているか」であり、「今回の地震の被害に直接言及しているか」ではない。**
+
+地震雲、人工地震・HAARP等の陰謀論、地震予知アカウント、過去の地震の映像の流用、避難所運営や外国人犯罪の噂といった言説は、今回の地震に直接言及していなくても**地震のたびに繰り返し現れる**。それらが湧いたという事実自体がこのモニタの記録対象である。したがって高く評価する。
+
+逆に低く評価するのは、地震と無関係な話題にたまたま「熊本」「地震」の語が含まれるだけのもの（医療デマ、アニメのAI生成判定など）、地震という現象と関係のない統計・ランキングの議論、誤情報の訂正を含まない純粋な政治的論評である。
+
+> 被害への直接言及を要求する狭い基準では、避難所に関する明確な災害デマまで取りこぼす。キーワード検索（熊本 / 地震 / 津波）だけでは無関係ノートが大量に混入するためこのステージは必須だが、絞りすぎてもモニタの目的を損なう。
+
+**閾値60**。60未満は `excluded: true` を立てるが**データからは消さない**。管理用の別ビュー（`?showExcluded=1`）で一覧・スコア・理由を確認でき、閾値のチューニング検証に使う。
+
+**分類失敗ノートの扱い**: Stage 1 または Stage 2 が失敗したノートは、**破棄せず「未分類プレースホルダ」として `notes` に保存する**（`classified_at = 0`、`excluded = true`、再試行待ちであることを `exclude_reason` に記録）。これにより `summary` が Postgres に残るため、再試行時に API を再取得せず DB から再分類できる。`upsertNotes` は `classified_at = 0` を番兵として扱い、既存の分類結果を上書きしない。
+
+**カーソルは分類の成否と無関係に、取得できた範囲まで前進させる**。失敗時にカーソルを留めると、恒久的にパースできないノートが1件あるだけで ingest が永久に凍結する。再試行は `retry_queue` が担い、カーソルの巻き戻しでは行わない。
+
+なお再試行時には `post.text` が既に存在しない（永続化しない設計のため）。したがって再分類は初回よりわずかに精度が落ちる。これは本文を保存しないという判断の受容コストである。
+
+**重要**: `postText` は分類精度に必要なため LLM への入力には使うが、**処理後に破棄し公開Blobには書き込まない**。Vercel Blob は既定で公開読み取り可能なため、UIで非表示にするだけでは本文が外部から取得できてしまう。
+
+### Stage 2 — クラスタ割当（増分）
+
+```
+in : 既存クラスタ一覧（id / name / description）+ 新規ノート
+out: { noteId, clusterId } | { noteId, newCluster: { name, description } }
+```
+
+### Stage 3 — 再編成（1時間ごと）
+
+```
+in : 全クラスタ + 各クラスタの代表ノート
+out: { merge: [{ from: [ids], into: id }], rename: [{ id, name }] }
+```
+
+**クラスタIDは永続**。マージ時も元IDを削除せず `aliasOf` を設定する。IDを振り直すと時系列グラフの色分けが毎回ジャンプして履歴が読めなくなる。
+
+### Stage 4 — 日次ダイジェスト（15:00 JST）
+
+過去24時間（前日15:00〜当日15:00）のノートとクラスタから Markdown を生成。**確定後はイミュータブル**。
+
+### Stage 5 — 累積レポート更新（15:00 JST）
+
+前日の累積レポート本文 ＋ 当日ダイジェスト → 統合した Markdown を生成し上書き。
+
+### Stage 6 — 評価状態のリフレッシュ（LLM不使用・1時間ごと）
+
+コミュニティノートは作成直後だと `currentStatus` が `null`、評価数がすべて0である。10分ごとの取得だけでは**全ノートが永久に「未評価」のまま固定される**。
+
+直近7日分のノートIDを `GET /api/v1/data/notes?note_ids=...` でまとめて再取得し、`currentStatus` / `helpfulCount` / `notHelpfulCount` / `rateCount` を上書きする。分類結果（`clusterId` / `relevance`）は再計算しない。
+
+`impressionCount` はこのエンドポイントのレスポンスに `post` が含まれないため更新できず、ingest 時の初回値で固定される（§9.1 #9）。ノートが後から拡散しても値は追随しない。
+
+---
+
+## 5. ストレージ設計
+
+**Neon Postgres を唯一の真実とし、Vercel Blob は公開用スナップショットの書き出し先とする。** Blob 上での read-modify-write は成立しないため（§5.3）、状態管理には使わない。KV / Upstash は使用しない。
+
+### 5.1 Neon Postgres（唯一の真実）
+
+スキーマは [`migrations/001_init.sql`](../migrations/001_init.sql) が定義であり、そちらが正典。
+
+| テーブル | 内容 |
+|---|---|
+| `notes` | 全ノート（除外分を含む）。`note_id` を主キーとし、**重複排除は主キー制約が担う** |
+| `clusters` | クラスタ定義。行は削除せず、マージ時は `alias_of` を立てる |
+| `app_state` | `cursor:last_note_created_at` などの小さな状態 |
+| `retry_queue` | LLM出力のパース失敗ノートの再試行キュー（`attempts` で試行回数を保持） |
+| `job_runs` | 各ジョブの最終実行時刻・処理件数・エラー |
+
+重複排除は `notes` の主キー制約が担うため、別途セットで管理する必要はない。分類に失敗したノートは `notes` に入らないため次回の取得対象に自然に戻る（これが意図した再試行経路である）。
+
+時刻はすべて epoch ミリ秒の `bigint` で保持する。BirdXplorer API が epoch ms を返すため、変換をデータ層の1箇所に閉じ込める意図。
+
+### 5.2 Vercel Blob（公開用スナップショット・書き出し専用）
+
+Postgres の内容から生成される派生物であり、**サーバ側から読み戻さない**。フロントエンドのみが読む。
+
+Blob store は **public アクセス**で作成する必要がある。アクセスモードは store 作成時に固定され後から変更できないため、private で作ってしまった場合は作り直すしかない。
+
+| パス | 内容 | 更新頻度 |
+|---|---|---|
+| `data/notes.json` | 全ノート（除外分を含む） | 10分 |
+| `data/timeline.json` | 30分ビン集計（フロント用に事前計算） | 10分 |
+| `data/clusters.json` | クラスタ定義 | 10分 |
+| `reports/daily/YYYY-MM-DD.md` | 日次ダイジェスト（**イミュータブル**） | 日次 |
+| `reports/cumulative.md` | 累積レポート（上書き） | 日次 |
+
+日次ダイジェストは確定後に書き換えない。累積レポートが継ぎ足しで劣化しても、一次記録はここに残る。永続URL `/report/2026-07-29` として公開する。
+
+Blob を残す理由は2つある。ISR との組み合わせで静的配信できるため安価かつ高速であること、そして**運用終了後に Neon を停止してもサイトが静的アーカイブとして生き続ける**こと。
+
+### 5.3 Blob を真実にできない理由（実地確認済み）
+
+- Vercel Blob は同一パス名への上書きが **CDN に伝播するまで最大60秒**かかる。公開 blob には即時読み取りの手段がない（private blob の `get({ useCache: false })` に相当するものがない）
+- `cacheControlMaxAge` の**既定値は1ヶ月**。明示的に短く設定しない限り、更新は事実上フロントエンドに届かない
+- 公式ドキュメント自身が「blob はイミュータブルなものとして扱うこと」を推奨しており、10分ごとに書き換える JSON の置き場としては設計意図に反する
+
+したがって書き出し時には更新頻度に見合った `cacheControlMaxAge` を明示的に設定する。日次レポートは確定後に変わらないため長期キャッシュでよい。
+
+---
+
+## 6. データモデル
+
+実装は `src/lib/types.ts` が唯一の定義。
+
+```ts
+type Note = {
+  noteId: string;
+  postId: string;
+  createdAt: number;          // epoch ms
+  summary: string;            // ノート本文（表示する）
+  postUrl: string;            // postId のみから組み立てる（https://x.com/user/status/{postId}）。post.link は使わない
+
+  // 評価状態（Stage 6 で定期更新）
+  currentStatus: 'NEEDS_MORE_RATINGS'
+               | 'CURRENTLY_RATED_HELPFUL'
+               | 'CURRENTLY_RATED_NOT_HELPFUL'
+               | null;
+  helpfulCount: number;
+  notHelpfulCount: number;
+  rateCount: number;
+  impressionCount: number | null;
+  statusRefreshedAt: number;
+
+  // 分類結果
+  relevance: number;          // 0-100
+  excluded: boolean;          // relevance < 60
+  excludeReason: string | null;
+  clusterId: string | null;
+  classifiedAt: number;
+  classifierVersion: string;  // プロンプト改訂時に再分類判定するため
+};
+
+type Cluster = {
+  id: string;                 // 永続 ("c_001")
+  name: string;
+  description: string;
+  colorIndex: number;         // パレット添字（0-9）
+  createdAt: number;
+  aliasOf: string | null;     // マージ先
+};
+```
+
+**保存しないフィールド**: `post.text` / `post.xUser.*`（`name` / `userId` / `profileImage` / `followersCount` / `followingCount`）/ `post.link`。`post.text` は分類時にメモリ上でのみ扱う。`post.link` は投稿者の表示名を URL に含む（実測。§3.3参照）ため使用も保存もしない。`postUrl` は `postId` のみから組み立てる。
+
+---
+
+## 7. フロントエンド
+
+デザインの詳細は `docs/design.md` を参照。データ供給に関する要件のみここに記す。
+
+- Blob の3ファイル（`notes` / `timeline` / `clusters`）と Markdown 2種を fetch
+- ISR、`revalidate: 600`（10分）
+- クラスタ定義は `clusters.json` から動的に構築する（ハードコード禁止）
+- 除外ノートは既定で非表示。`?showExcluded=1` で閲覧できる管理ビューを用意
+- レポートは Markdown をレンダリング。冒頭に生成時刻と「AI生成」の明示を固定表示
+- `/report/YYYY-MM-DD` で日次ダイジェストを個別閲覧可能に
+
+---
+
+## 8. 既知のリスク
+
+| # | リスク | 緩和策 |
+|---|---|---|
+| 1 | **累積レポートのドリフト**（継ぎ足しによる伝言ゲーム。誤りが混入すると以降ずっと運ばれ、再要約のたびに歪む） | 日次ダイジェストをイミュータブル保存し一次記録とする。累積側が壊れても復元可能 |
+| 2 | **無検証公開**（人手のチェックがない） | 手動で該当日次を差し替えられる管理パスを用意 |
+| 3 | **匿名化の限界**（Xリンク併記のため1クリックで特定可能。匿名化は速度制限にすぎない） | 意図的な設計判断として明記。ポリシーページに理由を記載 |
+| 4 | **dev エンドポイントへの依存**（本番エンドポイントは存在せず、`dev.` サブドメインのみが稼働。SLA・データ保持・予告なき停止のリスクがある。§9参照） | 取得失敗時に前回データを配信し続けるフォールバックを実装（必須要件） |
+| 5 | **レート制限が未文書化** | 指数バックオフ、`include_total=false`、10分間隔の遵守。429 を検知したら間隔を自動延長 |
+| 6 | **評価状態の陳腐化** | Stage 6 のリフレッシュジョブで直近7日分を更新する。それより古いノートの評価状態は取得時点の値で固定される。**UIへの注記は設けない**（設計判断。制約は本文書にのみ記録する） |
+| 7 | LLM出力のパース失敗・API障害 | スキーマ検証＋リトライキュー。失敗内容は `job_runs` テーブルに記録し、Vercel のランタイムログで追跡する（外部通知はなし） |
+| 8 | **訂正・削除依頼の窓口がない**（受容リスク）。無検証・完全公開でありながら、誤分類やレポートの誤りを外部から指摘する経路が存在しない | 緩和策なし。設計判断として受容 |
+
+---
+
+## 9. API の実測挙動とデータ量
+
+本番用の BirdXplorer API エンドポイントは存在しない。`api-birdxplorer.code4japan.org` / `api.birdxplorer.org` / `birdxplorer.org` はいずれも DNS 解決せず、OpenAPI が例示するホスト（`birdxplorer.onrender.com`）も 404 を返す死んだデプロイである。稼働しているのは `dev.` サブドメインのみで、SLA は存在しない。**したがって、取得失敗時に前回データを配信し続けるフォールバック（§8-4）は任意ではなく必須要件である。**
+
+レート制限は実測では観測されなかった。`/search/count` への15回連続および10回並列のリクエストはすべて 200 を返し、429 も `Retry-After` / `X-RateLimit-*` 系ヘッダーも一度も現れなかった。並列時にレイテンシは最大 4.6 秒まで劣化するがエラーにはならない。負荷下での挙動は未検証のため、指数バックオフは実装する。`limit=1000`（スキーマ上の上限、`1001` は 422）は約 1.3 秒で応答する。
+
+リポジトリは CfJ organization 配下に置く。
+
+### 9.1 API の実測挙動（OpenAPI の記述と異なる点）
+
+実装はこちらに従う。
+
+| # | 実測 | OpenAPI / 本仕様書の記述 |
+|---|---|---|
+| 1 | `note_created_at_to` は **inclusive** | exclusive（"older than"）と記載。§3.2 の記述は誤り |
+| 2 | 日付フィルタの単位は epoch **ミリ秒**。`minimum` はサーバ側で強制されず、単位を誤ると**無言で**空結果になる | `limit` の `maximum` のみ 422 で弾かれる |
+| 3 | 未知・誤記のクエリパラメータは**無言で無視**される | — |
+| 4 | `/api/v1/data/notes` は `/data/search` と**別のパラメータ名**を使う（`created_at_from` 等） | — |
+| 5 | `SearchedNote.post` は `postId` が非空でも **`null` になりうる** | 常に存在するかのような記述 |
+| 6 | `meta.next` / `meta.prev` は **`http://`** の絶対URL（リダイレクトされる）。https へ書き換えて使う | — |
+| 7 | `note_excludes_text` / `post_excludes_text` は単一文字列（`_includes_text` は配列）で非対称 | — |
+| 8 | 複数キーワードは**繰り返しクエリパラメータ**で指定する（`note_includes_text=熊本&note_includes_text=地震`） | 「配列で複数指定」 |
+| 9 | `/api/v1/data/notes` のレスポンススキーマに **`post` が含まれない**。したがって **`impressionCount` は Stage 6 でリフレッシュできない** | §4 Stage 6 は `impressionCount` も上書きすると記載 |
+
+**#9 の帰結**: `impressionCount` は `ingest` 時に取得した初回値で固定される。ノートが後から拡散しても値は追随しない。§8-6（評価状態の陳腐化）と同種の制約であり、同様に **UIへの注記は設けない**（設計判断。制約は本文書にのみ記録する）。他の評価フィールド（`currentStatus` / `helpfulCount` / `notHelpfulCount` / `rateCount`）は `/data/notes` から取得できるため Stage 6 で正常に更新される。
+
+### 9.2 データ量の実測
+
+- キーワード（熊本 / 地震 / 津波、OR、`language=ja`）の全期間一致件数: **8551件**
+- うち 2026-07-28 04:00 UTC 以降: **97件**（バックフィル対象）
+- 最新20件の抽出では **100% が `currentStatus: null` かつ `rateCount: 0`**。§4 Stage 6（評価状態のリフレッシュ）の前提が正しいことを裏付ける
+- 日付境界のない全文 OR 検索は `limit=5` でも 19.4 秒かかる。**日付フィルタを必ず併用する**
+
+---
+
+## 10. 環境変数
+
+`.env.example` を参照。
+
+```
+BIRDXPLORER_API_BASE=https://dev.api-birdxplorer.code4japan.org
+OPENROUTER_API_KEY
+OPENROUTER_MODEL              # Gemini 廉価モデル
+RELEVANCE_THRESHOLD=60
+CRON_SECRET
+BLOB_READ_WRITE_TOKEN
+DATABASE_URL                     # Neon Postgres（プーラ接続文字列）
+MONITOR_START_AT=1785211200000   # 2026-07-28 13:00 JST
+MONITOR_END_DATE=2026-08-31
+```
+
+---
+
+## 11. 実装ステップ
+
+1. API 疎通確認とレート制限の実測（`/api/v1/system/ping`、`/search/count`）
+2. 専用のバックフィルスクリプトは作らない。`getCursor()` は未設定時に `MONITOR_START_AT` を返すため、**`ingest` の初回実行がそのままバックフィルになる**。対象は97件（§9.2）で1回の実行で完了する見込み。仮に終わらなくても `searchNotes` の `truncated` フラグで打ち切り、次回実行が続きから再開する。専用スクリプトを別に持つと同じロジックが二重になり、片方だけ腐る
+3. `/api/cron/ingest` — カーソル・重複排除・スキーマ検証・リトライ機構
+4. `/api/cron/refresh-status`
+5. `/api/cron/recluster`
+6. `/api/cron/report`（日次＋累積）
+7. フロントエンド実装（`docs/design.md` に準拠）
+8. ポリシーページ（匿名化方針・AI生成の明示・データ出典）
+9. 8/31 の自動停止処理（cron 内で `MONITOR_END_DATE` を判定し no-op 化）
+
+---
+
+*本仕様書は 2026-07-29 時点の合意内容と OpenAPI 仕様の実地確認に基づく確定版。実装中の設計変更が生じた場合は本文書を改訂すること。*
