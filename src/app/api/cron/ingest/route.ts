@@ -1,7 +1,8 @@
 import { toNote, searchNotes } from "@/lib/birdxplorer";
 import { runCronJob } from "@/lib/cron";
 import { CLASSIFIER_VERSION } from "@/lib/llm";
-import { advanceCursor, drainRetryQueue, enqueueRetry, filterUnseen, getCursor } from "@/lib/state";
+import { env } from "@/lib/env";
+import { drainRetryQueue, enqueueRetry, filterUnseen } from "@/lib/state";
 import { UNCLASSIFIED_AT, publishSnapshot, readClusters, readNotes, upsertClusters, upsertNotes } from "@/lib/store";
 import type { Note } from "@/lib/types";
 import { ensureMigrated } from "../_lib/migrate-once";
@@ -22,9 +23,12 @@ export const runtime = "nodejs";
  */
 export const maxDuration = 300;
 
-// limit=1000 x 10ページ。バックフィル対象(約97件)を大きく上回るページ数を確保しつつ、
-// 万一大量のノートが積み上がっていても searchNotes の truncated フラグで安全に打ち切れる。
-const MAX_SEARCH_PAGES = 10;
+// limit=1000 x 20ページ = 2万件。実測は457件（2026-08-01時点、約113件/日）で、
+// 運用終了（8/31）までの線形外挿でも4千件程度なので5倍近い余裕がある。
+// ページングは meta.next が尽きた時点で止まるため、通常時（1ページ）のコストは
+// この上限を上げても変わらない。超過時は searchNotes が新しい側から
+// 2万件を取って打ち切る（＝古い裾を捨てる。searchNotes の sort_order 参照）。
+const MAX_SEARCH_PAGES = 20;
 // 1回の cron 実行で再試行するノート数の上限。無制限にすると1回の実行がいつまでも終わらない。
 const RETRY_DRAIN_LIMIT = 50;
 
@@ -50,9 +54,19 @@ export async function GET(req: Request): Promise<Response> {
       truncated: 0,
     };
 
-    // ── 1. cursor 以降のノートを取得 ──
-    const cursor = await getCursor();
-    const { records, truncated } = await searchNotes({ from: cursor, maxPages: MAX_SEARCH_PAGES });
+    // ── 1. 監視期間全体を毎回取得し直す ──
+    // かつては「最終処理済み createdAt」をカーソルにして差分だけを取っていたが、上流の
+    // BirdXplorer はカーソルが通り過ぎた後から、それより古い createdAt を持つノートを
+    // 追加してくる。単調前進するカーソルではそれらを永久に取得できず、実測で条件に
+    // 合致する457件のうち118件(26%)を取りこぼしていた（初期ほど深刻で 7/28 分は51%）。
+    //
+    // 全期間の再取得なら取りこぼしようがない。単一イベントモニタで総数が1ページ（1000件）に
+    // 収まる規模のため、追加コストは10分ごとに API 1リクエスト（実測約1.3秒）だけで済む。
+    // 既存分は filterUnseen が弾くので、LLM 分類の対象は従来どおり新規ノートのみ。
+    const { records, truncated } = await searchNotes({
+      from: env().MONITOR_START_AT,
+      maxPages: MAX_SEARCH_PAGES,
+    });
     stats.fetched = records.length;
     stats.truncated = truncated ? 1 : 0;
 
@@ -103,17 +117,7 @@ export async function GET(req: Request): Promise<Response> {
     await upsertClusters(mainResult.newClusters);
     await upsertNotes(mainNotes);
 
-    // ── 6. cursor 前進 ──
-    // 分類の成否に関わらず、実際に取得できた最新 createdAt まで進める（決定#2）。
-    // 対象は unseen（新規分）ではなく records（重複を含む取得結果全体）にする。
-    // 同一ミリ秒境界の重複は次回 from=同値 で再取得して filterUnseen が弾く設計であり、
-    // ここで cursor を戻す必要はない。
-    if (records.length > 0) {
-      const newestFetchedAt = records.reduce((max, r) => Math.max(max, r.raw.createdAt), cursor);
-      await advanceCursor(newestFetchedAt);
-    }
-
-    // ── 7. 再試行キューの排出 ──
+    // ── 6. 再試行キューの排出 ──
     // postText は初回 ingest の時点でメモリ上からしか扱われず、永続化していない
     // （CLAUDE.md「絶対に永続化しないもの」）。したがってここでは null を渡すほかなく、
     // 初回分類よりわずかに精度が落ちる。post本文を保存しないという設計上の制約の
@@ -161,7 +165,7 @@ export async function GET(req: Request): Promise<Response> {
       await upsertNotes(retryNotes);
     }
 
-    // ── 8. 公開スナップショットを書き出す ──
+    // ── 7. 公開スナップショットを書き出す ──
     await publishSnapshot();
 
     return stats;

@@ -12,11 +12,10 @@ import { classifyBatch, type Candidate } from "../../cron/ingest/classify";
  * Stage 1 のプロンプト改訂（CLASSIFIER_VERSION が上がったとき）に、既存ノートを
  * 新しい基準で再分類するための管理用エンドポイント。
  *
- * `ingest` とは別ジョブにする理由: ingest は「未取得の新規ノート」を対象に
- * cursor を前進させながら動く経路であり、既存の分類済み行を洗い直す用途とは
- * 目的も安全条件も異なる（cursor を触ってはいけない・rating 系カラムを触っては
- * いけない）。同じ関数に両方の分岐を持たせるより、専用エンドポイントに分けたほうが
- * 「何を触って何を触らないか」の条件が読みやすい。
+ * `ingest` とは別ジョブにする理由: ingest は「まだ notes に無いノート」だけを分類する
+ * 経路であり、既存の分類済み行を洗い直す用途とは目的も安全条件も異なる
+ * （rating 系カラムを触ってはいけない）。同じ関数に両方の分岐を持たせるより、
+ * 専用エンドポイントに分けたほうが「何を触って何を触らないか」の条件が読みやすい。
  *
  * migrate() が node:fs に依存するため Edge Runtime では動かない（ingest/route.ts と同じ理由）。
  */
@@ -142,9 +141,6 @@ export async function POST(req: Request): Promise<Response> {
     // クラスタ→ノートの順で書き込む（notes.cluster_id の外部キー制約のため。ingest と同じ順序）。
     await upsertClusters(result.newClusters);
     await upsertNotes(updatedNotes);
-
-    // cursor（app_state の cursor:last_note_created_at）はここでは一切参照・更新しない。
-    // このジョブは既存行の再分類であり、ingest が次に取得する範囲に影響してはならない。
 
     await publishSnapshot();
 
