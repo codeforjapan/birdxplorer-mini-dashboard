@@ -110,7 +110,8 @@ class NonRetryableHttpError extends Error {
 }
 
 // 実測: 日付で絞らない3キーワードOR全文検索は limit=5 でも19.4秒かかった（recon参照）。
-// 本番では日付境界（cursor）で絞るため通常はもっと速いはずだが、余裕を見て長めに取る。
+// 本番では note_created_at_from（MONITOR_START_AT）で絞るため通常はもっと速い
+// （監視期間全体の457件を limit=1000 で取って約1.3秒）が、余裕を見て長めに取る。
 const REQUEST_TIMEOUT_MS = 25_000;
 // Vercel の関数実行時間の上限内に収めるため、バックオフを含めた合計待ち時間にも上限を設ける。
 // これを超えたら諦めて例外を投げ、cron 側の次回実行に委ねる。
@@ -287,8 +288,12 @@ export type SearchNotesResult = {
   records: FetchedNote[];
   /**
    * maxPages に達してもまだ meta.next が残っていた場合 true。
-   * true のときは cron 側でカーソルを「最後に処理したノートの createdAt」までしか
-   * 進めず、残りは次回実行に持ち越すこと（取りこぼし防止）。
+   * 取得は新しい順（sort_order=desc）なので、打ち切られるのは最も古い側の裾である。
+   * 新着ノートは常に1ページ目に入るため、true でも取り込みは止まらない。
+   *
+   * ただし true の状態では「古い createdAt を持つノートが後から追加される」ケース
+   * （docs/spec.md §3.2）のうち、直近 limit×maxPages 件の外に落ちるものを拾えなくなる。
+   * job_runs に記録しているので、立ったら maxPages 不足のサインとして扱うこと。
    */
   truncated: boolean;
 };
@@ -310,7 +315,13 @@ export async function searchNotes(opts: SearchNotesOptions): Promise<SearchNotes
   params.set("note_created_at_from", String(opts.from));
   if (opts.to !== undefined) params.set("note_created_at_to", String(opts.to));
   params.set("sort_field", "note_created_at");
-  params.set("sort_order", "asc");
+  // 新しい順で取る。呼び出し側はどちらも取得結果を Map に詰めるだけで順序に依存しないため、
+  // ここでの向きの意味は「maxPages で打ち切られたときに、どちら側を捨てるか」に尽きる。
+  // desc なら捨てるのは最も古い裾であり、そこは既に notes に入っていて再スキャンの
+  // 必要が薄い部分になる。asc だと逆に新着側が永久に到達不能になり、取り込みが
+  // 静かに全停止する（ingest はカーソルを持たず毎回同じ範囲を取り直すため、
+  // 次回実行が続きを拾ってくれるという救済も無い）。
+  params.set("sort_order", "desc");
   params.set("limit", String(limit));
   params.set("include_total", "false");
 

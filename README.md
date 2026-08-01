@@ -42,7 +42,7 @@ Frontend (ISR 600s) ← Blob の JSON / Markdown
 | `src/lib/types.ts` | TypeScript 側の型定義。Blob に書く JSON の形はここが唯一の定義 |
 | `src/lib/db.ts` | Neon クライアントとマイグレーション |
 | `src/lib/store.ts` | ノート・クラスタの永続化、タイムライン集計、スナップショット書き出し |
-| `src/lib/state.ts` | カーソル・リトライキュー・ジョブ実行記録 |
+| `src/lib/state.ts` | 重複排除・リトライキュー・ジョブ実行記録 |
 | `src/lib/birdxplorer.ts` | BirdXplorer API クライアント（リトライ・スキーマ検証・匿名化） |
 | `src/lib/llm/` | LLM パイプライン各ステージ。`contract.ts` が呼び出し側との境界 |
 | `src/lib/clusters.ts` | クラスタIDの採番と alias 解決 |

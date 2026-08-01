@@ -47,13 +47,12 @@
 ```
 ┌─ Cron 10分ごと ─────────────────────────────┐
 │  /api/cron/ingest                           │
-│    1. cursor 以降のノートを取得             │
+│    1. 監視期間全体のノートを取得            │
 │    2. noteId で重複排除（notes の主キー）   │
 │    3. LLM① 関連性スコア判定（閾値60）       │
 │    4. LLM② 既存クラスタへ割当 or 新規提案   │
 │    5. Postgres に保存                       │
-│    6. cursor 前進                           │
-│    7. Blob へスナップショット書き出し       │
+│    6. Blob へスナップショット書き出し       │
 └─────────────────────────────────────────────┘
 
 ┌─ Cron 1時間ごと ────────────────────────────┐
@@ -109,10 +108,10 @@ curl -sS -H "Authorization: Bearer $CRON_SECRET" https://<deployment>/api/cron/i
 | `note_includes_text` | `熊本` / `地震` / `津波`（配列で複数指定） |
 | `note_search_mode` | `or` |
 | `language` | `ja` |
-| `note_created_at_from` | cursor の値（**以上**、inclusive） |
+| `note_created_at_from` | `MONITOR_START_AT` 固定（**以上**、inclusive）。§3.2 |
 | `note_created_at_to` | 省略（最新まで） |
 | `sort_field` | `note_created_at` |
-| `sort_order` | `asc` |
+| `sort_order` | `desc`（打ち切り時に古い側を捨てるため。§3.2） |
 | `limit` | `1000`（上限） |
 | `include_total` | `false`（COUNTをスキップして高速化） |
 
@@ -124,11 +123,21 @@ curl -sS -H "Authorization: Bearer $CRON_SECRET" https://<deployment>/api/cron/i
 - `GET /api/v1/data/notes?note_ids=...` — 既存ノートの評価状態を再取得（§4 Stage 6）
 - `GET /api/v1/system/ping` — 疎通確認
 
-### 3.2 カーソル設計
+### 3.2 取得範囲（カーソルを使わない理由）
 
 `note_created_at_from` と `note_created_at_to` は**どちらも inclusive** である（OpenAPI は `_to` を exclusive と記述しているが誤り。§9.1 #1）。値は epoch ミリ秒。
 
-同一ミリ秒に複数のノートが存在しうるため、`from = 最終処理済み createdAt`（−1ではなく同値）で再取得し、**`noteId` で重複排除する**。取りこぼしより重複取得のほうが安全。境界の扱いを API の inclusive/exclusive に依存させず、クライアント側の重複排除で吸収する設計にしている。
+**ingest は毎回 `from = MONITOR_START_AT` で監視期間全体を取得し直す。差分取得のためのカーソルは持たない。**
+
+当初は「最終処理済みノートの `createdAt`」をカーソルとして `app_state` に保持し、差分だけを取得していた。これは**上流が `note_created_at` の昇順にノートを公開する**という前提に立っていたが、この前提は成り立たない。BirdXplorer は、カーソルが既に通り過ぎた時刻の `createdAt` を持つノートを後から追加してくる。単調前進するカーソル（後退させない設計だった）ではそれらが永久に取得対象外になる。
+
+2026-08-01 に実測したところ、検索条件に合致する457件のうち **118件（26%）が未取込**だった。日別の取りこぼし率は 7/28 が 51%、7/29 が 28%、7/30 以降が数%で、カーソルが先行してからの経過時間が長い日ほど深刻という、この仮説どおりの分布を示した。
+
+全期間の再取得ならこの取りこぼしは原理的に起こらない。単一イベントモニタで総数が API の1ページ上限（1000件）に収まる規模であり、追加コストは10分ごとに1リクエスト（実測約1.3秒）にすぎない。既存ノートは `filterUnseen`（`notes` の主キー照合）が弾くため、LLM 分類に回るのは従来どおり新規ノートだけで、費用も変わらない。
+
+**取得は新しい順（`sort_order=desc`）で行う。** カーソルを廃した以上、`limit × maxPages`（現在 1000×20 = 2万件）を超えたときに「どちら側を捨てるか」がそのまま安全性を決めるためである。`desc` なら捨てるのは最も古い裾で、そこは既に `notes` に入っている部分にあたる。`asc` だと逆に新着側へ永久に到達できなくなり、取り込みが静かに全停止する（次回実行が続きを拾うという救済がカーソル廃止で失われている）。なお超過状態では、上で述べた「古い `createdAt` の後追い追加」のうち直近2万件の外に落ちるものを拾えなくなる。`truncated` は `job_runs` に記録しているので、立った場合は `maxPages` 不足のサインとして扱う。
+
+同一ミリ秒に複数のノートが存在しうる問題や、`from` の境界が inclusive か exclusive かという問題も、**`noteId` による重複排除**が一括して吸収する。境界の扱いを API の仕様に依存させない方針は変えていない。
 
 ### 3.3 レスポンスから使うフィールド
 
@@ -169,7 +178,7 @@ out: { noteId, relevance: 0-100, reason: string }[]
 
 **分類失敗ノートの扱い**: Stage 1 または Stage 2 が失敗したノートは、**破棄せず「未分類プレースホルダ」として `notes` に保存する**（`classified_at = 0`、`excluded = true`、再試行待ちであることを `exclude_reason` に記録）。これにより `summary` が Postgres に残るため、再試行時に API を再取得せず DB から再分類できる。`upsertNotes` は `classified_at = 0` を番兵として扱い、既存の分類結果を上書きしない。
 
-**カーソルは分類の成否と無関係に、取得できた範囲まで前進させる**。失敗時にカーソルを留めると、恒久的にパースできないノートが1件あるだけで ingest が永久に凍結する。再試行は `retry_queue` が担い、カーソルの巻き戻しでは行わない。
+分類に失敗したノートも `notes` にプレースホルダとして残るため、次回以降の取得で `filterUnseen` に弾かれ、再分類は `retry_queue` 経由でのみ行われる。取得範囲は分類の成否に一切影響されない（§3.2 のとおり毎回全期間を取り直すため）。
 
 なお再試行時には `post.text` が既に存在しない（永続化しない設計のため）。したがって再分類は初回よりわずかに精度が落ちる。これは本文を保存しないという判断の受容コストである。
 
@@ -221,7 +230,7 @@ out: { merge: [{ from: [ids], into: id }], rename: [{ id, name }] }
 |---|---|
 | `notes` | 全ノート（除外分を含む）。`note_id` を主キーとし、**重複排除は主キー制約が担う** |
 | `clusters` | クラスタ定義。行は削除せず、マージ時は `alias_of` を立てる |
-| `app_state` | `cursor:last_note_created_at` などの小さな状態 |
+| `app_state` | 小さな状態の汎用置き場。現時点で利用中のキーは無い（旧 `cursor:last_note_created_at` は §3.2 のとおり廃止） |
 | `retry_queue` | LLM出力のパース失敗ノートの再試行キュー（`attempts` で試行回数を保持） |
 | `job_runs` | 各ジョブの最終実行時刻・処理件数・エラー |
 
@@ -388,8 +397,8 @@ MONITOR_END_DATE=2026-08-31
 ## 11. 実装ステップ
 
 1. API 疎通確認とレート制限の実測（`/api/v1/system/ping`、`/search/count`）
-2. 専用のバックフィルスクリプトは作らない。`getCursor()` は未設定時に `MONITOR_START_AT` を返すため、**`ingest` の初回実行がそのままバックフィルになる**。対象は97件（§9.2）で1回の実行で完了する見込み。仮に終わらなくても `searchNotes` の `truncated` フラグで打ち切り、次回実行が続きから再開する。専用スクリプトを別に持つと同じロジックが二重になり、片方だけ腐る
-3. `/api/cron/ingest` — カーソル・重複排除・スキーマ検証・リトライ機構
+2. 専用のバックフィルスクリプトは作らない。`ingest` は毎回 `MONITOR_START_AT` から全期間を取得する（§3.2）ため、**どの実行もそのままバックフィルを兼ねる**。仮に1回で終わらなくても `searchNotes` の `truncated` フラグで打ち切り、次回実行が残りを拾う。専用スクリプトを別に持つと同じロジックが二重になり、片方だけ腐る
+3. `/api/cron/ingest` — 全期間取得・重複排除・スキーマ検証・リトライ機構
 4. `/api/cron/refresh-status`
 5. `/api/cron/recluster`
 6. `/api/cron/report`（日次＋累積）

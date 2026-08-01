@@ -1,47 +1,14 @@
 import { bigintToNumber, parseJsonbMaybe, sql } from "./db";
-import { env } from "./env";
 import type { JobName, JobRun } from "./types";
 
 /**
- * 削除された kv.ts の置き換え。責務は同じ（カーソル・重複排除・再試行キュー・
- * ジョブ実行記録）で、置き場所が Upstash Redis から Postgres の app_state /
- * retry_queue / job_runs テーブルに変わっただけ。
- * キー名は docs/spec.md §5.1 の命名をそのまま踏襲する。
+ * 削除された kv.ts の置き換え。責務は同じ（重複排除・再試行キュー・ジョブ実行記録）で、
+ * 置き場所が Upstash Redis から Postgres の retry_queue / job_runs テーブルに
+ * 変わっただけ。キー名は docs/spec.md §5.1 の命名をそのまま踏襲する。
+ *
+ * 取得カーソル（旧 `cursor:last_note_created_at`）は廃止した。上流が古い createdAt の
+ * ノートを後から追加してくるため、単調前進するカーソルでは取りこぼす（ingest/route.ts）。
  */
-
-const CURSOR_KEY = "cursor:last_note_created_at";
-
-// ── カーソル ─────────────────────────────────────────────────
-
-/**
- * 最終処理済みノートの createdAt（epoch ms）。未設定なら MONITOR_START_AT。
- */
-export async function getCursor(): Promise<number> {
-  const rows = await sql()`select value from app_state where key = ${CURSOR_KEY}`;
-  if (rows.length === 0) return env().MONITOR_START_AT;
-
-  const parsed = parseJsonbMaybe(rows[0]?.value);
-  if (typeof parsed !== "number") {
-    throw new Error(`カーソルの値が不正です（number ではない）: ${JSON.stringify(parsed)}`);
-  }
-  return parsed;
-}
-
-/**
- * カーソルを進める。GREATEST で比較し、既存値より小さい at が来ても後退させない
- * （並行実行やリトライで古い at が渡されても巻き戻らないようにするため）。
- * 1文の INSERT ... ON CONFLICT として実行するので、この比較と更新自体が
- * 単一ステートメントの原子性でレースしない。
- */
-export async function advanceCursor(at: number): Promise<void> {
-  await sql()`
-    insert into app_state (key, value, updated_at)
-    values (${CURSOR_KEY}, to_jsonb(${at}::bigint), now())
-    on conflict (key) do update set
-      value = to_jsonb(greatest((app_state.value #>> '{}')::bigint, ${at}::bigint)),
-      updated_at = now()
-  `;
-}
 
 // ── 重複排除 ─────────────────────────────────────────────────
 
