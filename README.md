@@ -18,6 +18,7 @@
 ```
 BirdXplorer REST API
   └─ /api/cron/ingest (10分ごと)
+       ├─ note 本文 OR 投稿本文でキーワード検索し noteId で和集合を取得
        ├─ LLM① 関連性スコア判定（閾値60未満は excluded）
        ├─ LLM② 既存クラスタへ割当 or 新規提案
        ├─ Neon Postgres に保存
