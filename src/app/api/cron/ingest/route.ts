@@ -31,6 +31,15 @@ export const maxDuration = 300;
 const MAX_SEARCH_PAGES = 20;
 // 1回の cron 実行で再試行するノート数の上限。無制限にすると1回の実行がいつまでも終わらない。
 const RETRY_DRAIN_LIMIT = 50;
+// 1回の cron 実行で新規分類するノート数の上限。ingest は全分類の完了後に末尾で
+// 一括 upsert するため、1回の実行が maxDuration(300s) 内に完走できないと進捗がゼロの
+// まま次回も同じ集合を取り直し、恒久的に詰まる。検索範囲を投稿本文に広げた結果、
+// 初回に数百件規模の新規ノートが一度に現れうる（post 単独ヒット分）。ここで上限を
+// 設け、超過分は次回以降に繰り越す（ingest はカーソルレスで毎回全期間を取り直すため、
+// 未処理分は次回の filterUnseen が再び返す。状態を持つ必要はない）。
+// 1回あたりの分類総数の最悪ケースは MAX_CLASSIFY_PER_RUN + RETRY_DRAIN_LIMIT なので、
+// 300s に確実に収まるよう保守的に設定する。定常時は unseen が数件なので上限は効かない。
+const MAX_CLASSIFY_PER_RUN = 50;
 
 /**
  * Vercel cron は登録した path を **GET** で叩く（メソッドの指定はできない）。
@@ -44,6 +53,7 @@ export async function GET(req: Request): Promise<Response> {
     const stats = {
       fetched: 0,
       unseen: 0,
+      deferred: 0,
       classified: 0,
       excluded: 0,
       failed: 0,
@@ -67,6 +77,7 @@ export async function GET(req: Request): Promise<Response> {
       from: env().MONITOR_START_AT,
       maxPages: MAX_SEARCH_PAGES,
     });
+    // records は searchNotes が note∪post を noteId で重複排除した「distinct ノート数」。
     stats.fetched = records.length;
     stats.truncated = truncated ? 1 : 0;
 
@@ -75,10 +86,15 @@ export async function GET(req: Request): Promise<Response> {
     const unseen = records.filter((r) => unseenIds.has(r.raw.noteId));
     stats.unseen = unseen.length;
 
+    // 1回の実行で分類する新規ノートを上限までに絞る。残りは次回以降に繰り越す
+    // （末尾一括 upsert のため、1実行で完走できないと進捗が残らない。MAX_CLASSIFY_PER_RUN 参照）。
+    const toClassify = unseen.slice(0, MAX_CLASSIFY_PER_RUN);
+    stats.deferred = unseen.length - toClassify.length;
+
     const clusters = await readClusters();
 
     // ── 3-4. Stage1 関連性判定 → Stage2 クラスタ割当 ──
-    const candidates: Candidate[] = unseen.map((r) => ({
+    const candidates: Candidate[] = toClassify.map((r) => ({
       noteId: r.raw.noteId,
       summary: r.raw.summary,
       postText: r.postText,
@@ -87,7 +103,7 @@ export async function GET(req: Request): Promise<Response> {
     stats.newClusters += mainResult.newClusters.length;
 
     const mainNotes: Note[] = [];
-    for (const r of unseen) {
+    for (const r of toClassify) {
       const classification = mainResult.classifications.get(r.raw.noteId);
       if (classification) {
         mainNotes.push(toNote(r.raw, classification));
