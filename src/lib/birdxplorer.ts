@@ -287,44 +287,20 @@ export type SearchNotesOptions = {
 export type SearchNotesResult = {
   records: FetchedNote[];
   /**
-   * maxPages に達してもまだ meta.next が残っていた場合 true。
-   * 取得は新しい順（sort_order=desc）なので、打ち切られるのは最も古い側の裾である。
-   * 新着ノートは常に1ページ目に入るため、true でも取り込みは止まらない。
-   *
-   * ただし true の状態では「古い createdAt を持つノートが後から追加される」ケース
-   * （docs/spec.md §3.2）のうち、直近 limit×maxPages 件の外に落ちるものを拾えなくなる。
-   * job_runs に記録しているので、立ったら maxPages 不足のサインとして扱うこと。
+   * note-mode / post-mode いずれかのクエリが maxPages に達してもまだ meta.next が
+   * 残っていた場合 true。取得は新しい順（sort_order=desc）なので打ち切られるのは
+   * 最も古い側の裾であり、新着ノートは常に1ページ目に入るため true でも取り込みは
+   * 止まらない。job_runs に記録しているので、立ったら maxPages 不足のサインとして扱う。
    */
   truncated: boolean;
 };
 
-/**
- * `GET /api/v1/data/search` をキーワード（熊本/地震/津波・OR）で叩き、
- * meta.next を辿ってページングする。
- */
-export async function searchNotes(opts: SearchNotesOptions): Promise<SearchNotesResult> {
-  const limit = opts.limit ?? DEFAULT_SEARCH_LIMIT;
-  const maxPages = opts.maxPages ?? DEFAULT_MAX_PAGES;
-
-  const params = new URLSearchParams();
-  // note_includes_text は「配列」だが、実際に効くのは同名パラメータの繰り返し形式
-  // （URLSearchParams.append を使う。日本語キーワードのエンコードもこれで正しく行われる）。
-  for (const kw of SEARCH_KEYWORDS) params.append("note_includes_text", kw);
-  params.set("note_search_mode", "or");
-  params.set("language", "ja");
-  params.set("note_created_at_from", String(opts.from));
-  if (opts.to !== undefined) params.set("note_created_at_to", String(opts.to));
-  params.set("sort_field", "note_created_at");
-  // 新しい順で取る。呼び出し側はどちらも取得結果を Map に詰めるだけで順序に依存しないため、
-  // ここでの向きの意味は「maxPages で打ち切られたときに、どちら側を捨てるか」に尽きる。
-  // desc なら捨てるのは最も古い裾であり、そこは既に notes に入っていて再スキャンの
-  // 必要が薄い部分になる。asc だと逆に新着側が永久に到達不能になり、取り込みが
-  // 静かに全停止する（ingest はカーソルを持たず毎回同じ範囲を取り直すため、
-  // 次回実行が続きを拾ってくれるという救済も無い）。
-  params.set("sort_order", "desc");
-  params.set("limit", String(limit));
-  params.set("include_total", "false");
-
+// 1つのパラメータセットで meta.next を辿り、全ページを取得する。
+// note-mode / post-mode の両方で使い回す（呼び出し側で params を差し替える）。
+async function fetchAllPages(
+  params: URLSearchParams,
+  maxPages: number,
+): Promise<{ records: FetchedNote[]; truncated: boolean }> {
   let nextUrl: string | null = `${env().BIRDXPLORER_API_BASE}/api/v1/data/search?${params.toString()}`;
   const records: FetchedNote[] = [];
   let truncated = false;
@@ -350,6 +326,65 @@ export async function searchNotes(opts: SearchNotesOptions): Promise<SearchNotes
   }
 
   return { records, truncated };
+}
+
+// note-mode と post-mode で共通の検索条件。キーワード指定（note_includes_text /
+// post_includes_text）と search_mode だけがモード固有なので、それは呼び出し側で付ける。
+function buildBaseParams(opts: SearchNotesOptions, limit: number): URLSearchParams {
+  const params = new URLSearchParams();
+  params.set("language", "ja");
+  params.set("note_created_at_from", String(opts.from));
+  if (opts.to !== undefined) params.set("note_created_at_to", String(opts.to));
+  params.set("sort_field", "note_created_at");
+  // 新しい順で取る。maxPages で打ち切られたときに古い裾（既に notes に入っている側）を
+  // 捨てて新着を守るため。asc だと新着側へ永久に到達できず取り込みが静かに全停止する。
+  params.set("sort_order", "desc");
+  params.set("limit", String(limit));
+  params.set("include_total", "false");
+  return params;
+}
+
+/**
+ * `GET /api/v1/data/search` を「ノート本文 OR 投稿本文」でキーワード検索する。
+ *
+ * API は note 条件（note_includes_text）と post 条件（post_includes_text）を内部で
+ * AND 結合する（BirdXplorer common storage の _apply_filters）。そのため両者を同一
+ * リクエストに混ぜると「note にも post にも両方含む」ものだけに絞られてしまう
+ * （dev 実測で 509 → 328 に縮小）。「note 本文 OR 投稿本文」を表現するには、
+ * note-mode と post-mode を別クエリで投げ、ここで noteId によりマージするしかない。
+ *
+ * post-mode は「投稿がキーワードを含むノート」を返すが、その投稿が BirdXplorer の
+ * DB に存在するノートに限られる（post が無いノートは拾えない）。
+ */
+export async function searchNotes(opts: SearchNotesOptions): Promise<SearchNotesResult> {
+  const limit = opts.limit ?? DEFAULT_SEARCH_LIMIT;
+  const maxPages = opts.maxPages ?? DEFAULT_MAX_PAGES;
+
+  const noteParams = buildBaseParams(opts, limit);
+  for (const kw of SEARCH_KEYWORDS) noteParams.append("note_includes_text", kw);
+  noteParams.set("note_search_mode", "or");
+
+  const postParams = buildBaseParams(opts, limit);
+  for (const kw of SEARCH_KEYWORDS) postParams.append("post_includes_text", kw);
+  postParams.set("post_search_mode", "or");
+
+  // A と B は独立なので並列で投げる（直列 2.6s → 並列 1.3s 程度）。
+  const [noteResult, postResult] = await Promise.all([
+    fetchAllPages(noteParams, maxPages),
+    fetchAllPages(postParams, maxPages),
+  ]);
+
+  // noteId で重複排除して和集合を作る。note-mode を先に入れ、post-mode は未登録のみ補完
+  // （同一 noteId の record は同一内容なので first-wins で等価）。
+  const byNoteId = new Map<string, FetchedNote>();
+  for (const r of noteResult.records) byNoteId.set(r.raw.noteId, r);
+  for (const r of postResult.records) if (!byNoteId.has(r.raw.noteId)) byNoteId.set(r.raw.noteId, r);
+
+  // 片方でも打ち切られたら取りこぼしのサインとして立てる（job_runs に記録される）。
+  return {
+    records: [...byNoteId.values()],
+    truncated: noteResult.truncated || postResult.truncated,
+  };
 }
 
 // ── fetchNoteStatuses: Stage 6 の評価状態リフレッシュ ─────────────
