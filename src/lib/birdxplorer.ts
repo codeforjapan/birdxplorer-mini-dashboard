@@ -290,7 +290,9 @@ export type SearchNotesResult = {
    * note-mode / post-mode いずれかのクエリが maxPages に達してもまだ meta.next が
    * 残っていた場合 true。取得は新しい順（sort_order=desc）なので打ち切られるのは
    * 最も古い側の裾であり、新着ノートは常に1ページ目に入るため true でも取り込みは
-   * 止まらない。job_runs に記録しているので、立ったら maxPages 不足のサインとして扱う。
+   * 止まらない。ただし true の状態では、上流が後から追加してくる「古い createdAt を
+   * 持つノート」（docs/spec.md §3.2）のうち直近 limit×maxPages 件の外に落ちるものを
+   * 拾えなくなる。job_runs に記録しているので、立ったら maxPages 不足のサインとして扱う。
    */
   truncated: boolean;
 };
@@ -345,6 +347,9 @@ function buildBaseParams(opts: SearchNotesOptions, limit: number): URLSearchPara
 }
 
 // base に指定モードのキーワード条件を足す。note-mode / post-mode の唯一の差分。
+// includes 系は名目上「配列」だが、実際に効くのは同名パラメータの繰り返し形式なので
+// URLSearchParams.append を使う（join 等で1値にまとめると効かない。日本語キーワードの
+// エンコードも append で正しく行われる）。
 function withKeywords(
   base: URLSearchParams,
   includesField: "note_includes_text" | "post_includes_text",
@@ -361,7 +366,7 @@ function withKeywords(
  * API は note 条件（note_includes_text）と post 条件（post_includes_text）を内部で
  * AND 結合する（BirdXplorer common storage の _apply_filters）。そのため両者を同一
  * リクエストに混ぜると「note にも post にも両方含む」ものだけに絞られてしまう
- * （dev 実測で 509 → 328 に縮小）。「note 本文 OR 投稿本文」を表現するには、
+ * （実測値は docs/spec.md §3.2.1）。「note 本文 OR 投稿本文」を表現するには、
  * note-mode と post-mode を別クエリで投げ、ここで noteId によりマージするしかない。
  *
  * post-mode は「投稿がキーワードを含むノート」を返すが、その投稿が BirdXplorer の

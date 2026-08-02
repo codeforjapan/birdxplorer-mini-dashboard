@@ -37,8 +37,9 @@ const RETRY_DRAIN_LIMIT = 50;
 // 初回に数百件規模の新規ノートが一度に現れうる（post 単独ヒット分）。ここで上限を
 // 設け、超過分は次回以降に繰り越す（ingest はカーソルレスで毎回全期間を取り直すため、
 // 未処理分は次回の filterUnseen が再び返す。状態を持つ必要はない）。
-// 1回あたりの分類総数の最悪ケースは MAX_CLASSIFY_PER_RUN + RETRY_DRAIN_LIMIT なので、
-// 300s に確実に収まるよう保守的に設定する。定常時は unseen が数件なので上限は効かない。
+// 1回あたりの分類総数の最悪ケースは MAX_CLASSIFY_PER_RUN + RETRY_DRAIN_LIMIT。LLM レイテンシは
+// 未実測のため「300s に収まる想定」で保守的に置いている。初回スパイク時の実行時間を job_runs で
+// 確認し、必要なら調整する。定常時は unseen が数件なので上限は効かない。
 const MAX_CLASSIFY_PER_RUN = 50;
 
 /**
