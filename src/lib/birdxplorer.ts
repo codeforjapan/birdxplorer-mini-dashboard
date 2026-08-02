@@ -344,6 +344,17 @@ function buildBaseParams(opts: SearchNotesOptions, limit: number): URLSearchPara
   return params;
 }
 
+// base に指定モードのキーワード条件を足す。note-mode / post-mode の唯一の差分。
+function withKeywords(
+  base: URLSearchParams,
+  includesField: "note_includes_text" | "post_includes_text",
+  searchModeField: "note_search_mode" | "post_search_mode",
+): URLSearchParams {
+  for (const kw of SEARCH_KEYWORDS) base.append(includesField, kw);
+  base.set(searchModeField, "or");
+  return base;
+}
+
 /**
  * `GET /api/v1/data/search` を「ノート本文 OR 投稿本文」でキーワード検索する。
  *
@@ -360,15 +371,10 @@ export async function searchNotes(opts: SearchNotesOptions): Promise<SearchNotes
   const limit = opts.limit ?? DEFAULT_SEARCH_LIMIT;
   const maxPages = opts.maxPages ?? DEFAULT_MAX_PAGES;
 
-  const noteParams = buildBaseParams(opts, limit);
-  for (const kw of SEARCH_KEYWORDS) noteParams.append("note_includes_text", kw);
-  noteParams.set("note_search_mode", "or");
+  const noteParams = withKeywords(buildBaseParams(opts, limit), "note_includes_text", "note_search_mode");
+  const postParams = withKeywords(buildBaseParams(opts, limit), "post_includes_text", "post_search_mode");
 
-  const postParams = buildBaseParams(opts, limit);
-  for (const kw of SEARCH_KEYWORDS) postParams.append("post_includes_text", kw);
-  postParams.set("post_search_mode", "or");
-
-  // A と B は独立なので並列で投げる（直列 2.6s → 並列 1.3s 程度）。
+  // note-mode と post-mode は独立なので並列で投げる（直列 2.6s → 並列 1.3s 程度）。
   const [noteResult, postResult] = await Promise.all([
     fetchAllPages(noteParams, maxPages),
     fetchAllPages(postParams, maxPages),
