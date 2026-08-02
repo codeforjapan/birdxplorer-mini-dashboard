@@ -107,6 +107,8 @@ curl -sS -H "Authorization: Bearer $CRON_SECRET" https://<deployment>/api/cron/i
 |---|---|
 | `note_includes_text` | `熊本` / `地震` / `津波`（配列で複数指定） |
 | `note_search_mode` | `or` |
+| `post_includes_text` | `熊本` / `地震` / `津波`（別クエリ。§3.2.1） |
+| `post_search_mode` | `or` |
 | `language` | `ja` |
 | `note_created_at_from` | `MONITOR_START_AT` 固定（**以上**、inclusive）。§3.2 |
 | `note_created_at_to` | 省略（最新まで） |
@@ -114,6 +116,8 @@ curl -sS -H "Authorization: Bearer $CRON_SECRET" https://<deployment>/api/cron/i
 | `sort_order` | `desc`（打ち切り時に古い側を捨てるため。§3.2） |
 | `limit` | `1000`（上限） |
 | `include_total` | `false`（COUNTをスキップして高速化） |
+
+`note_includes_text` と `post_includes_text` は同一リクエストに混在させず、note と post は別クエリとして投げ、`noteId` で和集合を取る（§3.2.1）。
 
 レスポンスは `SearchResponse`。`data[]` は `SearchedNote`（`post` を内包）、`meta.next` に次ページURLが入る。
 
@@ -139,6 +143,27 @@ curl -sS -H "Authorization: Bearer $CRON_SECRET" https://<deployment>/api/cron/i
 
 同一ミリ秒に複数のノートが存在しうる問題や、`from` の境界が inclusive か exclusive かという問題も、**`noteId` による重複排除**が一括して吸収する。境界の扱いを API の仕様に依存させない方針は変えていない。
 
+### 3.2.1 note と post を別クエリで取得する理由
+
+「ノート本文にキーワードは無いが投稿本文にはある」ノートを取り込むため、`post_includes_text`
+でも検索する。ただし API は note 条件（`note_includes_text`）と post 条件（`post_includes_text`）を
+内部で **AND 結合**する（BirdXplorer common storage の `_apply_filters`）。両者を同一リクエストに
+渡すと「note にも post にも両方含む」ものだけに絞られてしまう。
+
+したがって `searchNotes` は note-mode と post-mode を**別々のクエリ**として投げ、`noteId` で
+重複排除した**和集合**を返す。dev 実測（2026-08-02, 監視期間全体・ja）は次のとおり:
+
+| クエリ | 件数 |
+|---|---|
+| note_includes_text のみ | 509 |
+| post_includes_text のみ | 554 |
+| 両方指定（AND） | 328 |
+
+和集合 = 509 + 554 − 328 = 735。素朴に両方を1リクエストに渡すと 328 に縮小する（181件を失う）。
+
+post-mode は「投稿がキーワードを含むノート」を返すが、その投稿が BirdXplorer の DB に
+存在するノートに限られる（post 未取得のノートは拾えない）。これは受容する既知の制約である。
+
 ### 3.3 レスポンスから使うフィールド
 
 | パス | 用途 |
@@ -160,6 +185,9 @@ curl -sS -H "Authorization: Bearer $CRON_SECRET" https://<deployment>/api/cron/i
 すべて OpenRouter 経由。**JSON Schema 指定がプロバイダ側で無視される場合がある**ため、全ステージで出力のスキーマ検証を行い、失敗時は `retry_queue` テーブルに退避して次回再試行する。
 
 ### Stage 1 — 関連性判定（増分・バッチ）
+
+なお収集対象にはノート本文ヒット分に加えて投稿本文ヒット分（§3.2.1）も含まれる。
+いずれも同じ Stage 1 の関連性判定を通るため、投稿本文経由で増えるノイズもここで弾かれる。
 
 ```
 in : { noteId, summary, postText }[]
