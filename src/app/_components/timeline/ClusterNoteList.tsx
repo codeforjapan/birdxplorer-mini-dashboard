@@ -1,5 +1,6 @@
 import { mmddhhmm } from "@/lib/time";
 import type { ViewNote } from "@/lib/view";
+import { SearchlightBadges } from "./SearchlightBadges";
 
 /**
  * クラスタ別Note一覧(design.md §6.6)。
@@ -122,6 +123,11 @@ export function ClusterNoteList({ notes }: { notes: ViewNote[] }) {
                           <p className="min-w-0 flex-1 text-[13px] leading-[1.7] text-body">
                             {note.summary}
                           </p>
+                          {note.searchlight && (
+                            <span className="shrink-0 pt-0.5">
+                              <SearchlightBadges badge={note.searchlight} />
+                            </span>
+                          )}
                           <a
                             href={note.postUrl}
                             target="_blank"
