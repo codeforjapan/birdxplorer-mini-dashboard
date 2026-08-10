@@ -9,7 +9,8 @@
 
 /** Searchlight の X insight（tweet_id で結合）に基づく付加バッジ。マッチした時のみ Note に存在する。 */
 export type SearchlightBadge = {
-  stance: "SPREADING" | "DEBUNKING" | "REPORTING" | "NEUTRAL";
+  /** 分析が stance を付与しないことがあるため null 許容（src/lib/searchlight.ts 参照）。 */
+  stance: "SPREADING" | "DEBUNKING" | "REPORTING" | "NEUTRAL" | null;
   urgency: "NONE" | "LOW" | "MEDIUM" | "HIGH";
   // claimType は UI が表示に使わないため公開契約から除外（データ最小化）。DB 行(SearchlightInsightRow)には残す。
   officialRelationship: string;
