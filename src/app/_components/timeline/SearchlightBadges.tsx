@@ -10,7 +10,8 @@ import type { SearchlightBadge } from "@/lib/types";
  * 固定、stance の色identityは先頭の6px丸ドットで担う(色を情報の唯一の担い手に
  * しないよう、ラベル文字を必ず併記する)。
  */
-const STANCE_LABEL: Record<SearchlightBadge["stance"], { text: string; dotColor: string } | null> = {
+// stance=null（分析が付与しなかった）は STANCE_LABEL 参照前に弾くため、ここでは非null分のみ扱う。
+const STANCE_LABEL: Record<Exclude<SearchlightBadge["stance"], null>, { text: string; dotColor: string } | null> = {
   SPREADING: { text: "拡散源", dotColor: "var(--color-cluster-7)" }, // red
   DEBUNKING: { text: "打消し", dotColor: "var(--color-cluster-3)" }, // yellow
   REPORTING: { text: "報道", dotColor: "var(--color-cluster-0)" }, // blue
@@ -39,13 +40,20 @@ function stanceChip(text: string, dotColor: string, key: string) {
 
 export function SearchlightBadges({ badge }: { badge: SearchlightBadge }) {
   const chips: React.ReactNode[] = [];
-  const stance = STANCE_LABEL[badge.stance];
+  // stance は分析が付与しないことがある（null 可）。null のときは STANCE_LABEL を引かずチップも出さない。
+  const stance = badge.stance ? STANCE_LABEL[badge.stance] : null;
   if (stance) chips.push(stanceChip(stance.text, stance.dotColor, "stance"));
   if (badge.urgency === "HIGH" || badge.urgency === "MEDIUM") {
     chips.push(chip(`緊急度: ${badge.urgency === "HIGH" ? "高" : "中"}`, "bg-block text-weak", "urgency"));
   }
-  // 公式と相違を示すときだけ「公式と相違」チップ。URL があればリンクにする。
-  if (/CONFLICT/i.test(badge.officialRelationship)) {
+  // 公式情報の関係性でチップを出し分ける。
+  // - conflict（公式と食い違う）: 従来どおり「公式と相違」。
+  // - insufficient（公式で裏取れない）: 実データで多く、公式が裏付けないため実質デマ寄りの
+  //   シグナルとして有用。読者が一次情報を確認できるよう、公式URLがある場合のみ「公式情報」
+  //   リンクを出す（URLが無ければ判断材料にならないため出さない）。
+  const isConflict = /conflict/i.test(badge.officialRelationship);
+  const isInsufficient = /insufficient/i.test(badge.officialRelationship);
+  if (isConflict) {
     const label = "公式と相違";
     chips.push(
       badge.officialUrl ? (
@@ -61,6 +69,18 @@ export function SearchlightBadges({ badge }: { badge: SearchlightBadge }) {
       ) : (
         chip(label, "bg-block text-weak", "official")
       ),
+    );
+  } else if (isInsufficient && badge.officialUrl) {
+    chips.push(
+      <a
+        key="official"
+        href={badge.officialUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="tabular shrink-0 rounded bg-block px-1.5 py-0.5 text-[10px] text-label underline hover:text-body"
+      >
+        公式情報
+      </a>,
     );
   }
   if (chips.length === 0) return null;
