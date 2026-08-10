@@ -21,21 +21,26 @@ function oneOf<T extends readonly string[]>(v: unknown, allowed: T): T[number] |
   return typeof v === "string" && (allowed as readonly string[]).includes(v) ? (v as T[number]) : null;
 }
 /**
- * claim_type / official_source_relationship は正確な enum 値集合が未確定（実API裏取り待ち、オープン事項）。
- * そのため値集合ではなく「列挙トークン形式」（大文字英数字とアンダースコアのみ、1〜64文字）を強制する。
- * RUMOR_OR_UNVERIFIED や CONFLICTS のようなトークンは通し、空白・句読点を含む AI 自由文は弾く。
+ * claim_type / official_source_relationship は正確な enum 値集合までは検証しない。
+ * 実 API 裏取り済み: claim_type は大文字スネーク（例 RUMOR_OR_UNVERIFIED）、
+ * official_source_relationship は小文字スネーク（例 conflicts_with_official_source）と大小が異なるため、
+ * 値集合ではなく「列挙トークン形式」（英数字とアンダースコアのみ、1〜64文字、大小どちらも許容）を強制する。
+ * 空白・句読点を含む AI 自由文だけを弾く。
  * 過剰に弾いてもバッジが出ないだけの fail-safe（既存表示への影響なし）であり、
  * 自由文を公開 Blob に載せない不変条件を優先する。
- * 注意: 実際の enum 値の大文字/記号仕様が確定したら（オープン事項）このガードを見直すこと。
  */
 function isEnumToken(v: unknown): v is string {
-  return typeof v === "string" && /^[A-Z0-9_]{1,64}$/.test(v);
+  return typeof v === "string" && /^[A-Za-z0-9_]{1,64}$/.test(v);
 }
-/** official_source_evidence（URL文字列 or その配列）から最初の妥当な https URL を1件取る。 */
+/**
+ * official_source_evidence（`{ title, url }` オブジェクトの配列）から最初の妥当な https URL を1件取る。
+ * 要素が文字列URLの場合も後方互換で許容する。unknown で受けて型ガードし、any は使わない。
+ */
 function firstUrl(v: unknown): string | null {
-  const arr = Array.isArray(v) ? v : [v];
-  for (const item of arr) {
+  if (!Array.isArray(v)) return null;
+  for (const item of v) {
     if (typeof item === "string" && /^https?:\/\//.test(item)) return item;
+    if (isRecord(item) && typeof item.url === "string" && /^https?:\/\//.test(item.url)) return item.url;
   }
   return null;
 }
@@ -90,19 +95,34 @@ async function getToken(): Promise<string> {
 }
 
 /**
- * 対象トピックの X insight を列挙し DB 行へ整形する。
- * ※ 列挙エンドポイント・ページングはオープン事項3で確定する。ここは暫定形。
+ * レスポンス外枠から insight 配列を取り出す。
+ * 実 API は bare 配列だが、将来の互換変更に備えて `{items:[]}` / `{insights:[]}` / `{data:[]}`
+ * のいずれの包み方でも防御的に対応する（該当なしは空配列）。
+ */
+function extractItems(body: unknown): unknown[] {
+  if (Array.isArray(body)) return body;
+  if (!isRecord(body)) return [];
+  for (const key of ["items", "insights", "data"] as const) {
+    if (Array.isArray(body[key])) return body[key];
+  }
+  return [];
+}
+
+/**
+ * 対象会社の X insight を列挙し DB 行へ整形する。
+ * 実 API 裏取り済み: insights は会社スコープ（`/companies/{id}/insights`）で、トピック直下ではない。
+ * ※ ページング未対応（オープン事項）。
  */
 export async function getInsights(now: number = Date.now()): Promise<SearchlightInsightRow[]> {
   const cfg = searchlightEnv();
   const token = await getToken();
   const res = await fetch(
-    `${cfg.SEARCHLIGHT_BASE_URL}/topics/${cfg.SEARCHLIGHT_TOPIC_ID}/insights?platform=x`,
+    `${cfg.SEARCHLIGHT_BASE_URL}/companies/${cfg.SEARCHLIGHT_COMPANY_ID}/insights?platform=x`,
     { headers: { authorization: `Bearer ${token}` } },
   );
   if (!res.ok) throw new Error(`Searchlight insights 取得失敗: ${res.status}`);
   const body: unknown = await res.json();
-  const items = Array.isArray(body) ? body : isRecord(body) && Array.isArray(body.items) ? body.items : [];
+  const items = extractItems(body);
   const rows: SearchlightInsightRow[] = [];
   for (const raw of items) {
     const row = toBadgeRow(raw, now);

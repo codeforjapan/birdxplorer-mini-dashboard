@@ -47,7 +47,8 @@ const searchlightSchema = z.object({
     .transform((v) => v.replace(/\/+$/, "")),
   SEARCHLIGHT_CLIENT_ID: z.string().min(1),
   SEARCHLIGHT_CLIENT_SECRET: z.string().min(1),
-  SEARCHLIGHT_TOPIC_ID: z.string().min(1),
+  /** insights は会社スコープ（`/companies/{id}/insights`）で取得するため、トピックIDではなく会社IDが必要。 */
+  SEARCHLIGHT_COMPANY_ID: z.string().min(1),
 });
 
 export type CoreEnv = z.infer<typeof coreSchema>;
