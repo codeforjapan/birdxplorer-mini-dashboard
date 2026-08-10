@@ -269,7 +269,30 @@ export function toNote(raw: SearchedNoteForNote, classification: Classification,
 
 // ── searchNotes: メインの取得経路 ─────────────────────────────────
 
-const SEARCH_KEYWORDS = ["熊本", "地震", "津波"] as const;
+// OR・部分一致でゆるく収集する検索語。地震周辺の言説を取りこぼさないよう拡張しており、
+// 無関係なノートは Stage1 の関連性判定（relevance.ts）で弾く前提。
+const SEARCH_KEYWORDS = [
+  "熊本",
+  "地震",
+  "津波",
+  "災害",
+  "避難所",
+  "氷川",
+  "八代",
+  "九州",
+  "令和8年",
+  "令和８年",
+  "イオンモール",
+  "トリアージ",
+  "震度7",
+  "宇城",
+  "阿蘇",
+  "自衛隊",
+  "被災",
+  "義援金",
+  "募金",
+  "ボランティア",
+] as const;
 const DEFAULT_SEARCH_LIMIT = 1000; // API の上限（limit=1001 は 422 で拒否される）
 const DEFAULT_MAX_PAGES = 10;
 
