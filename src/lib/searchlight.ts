@@ -108,25 +108,39 @@ function extractItems(body: unknown): unknown[] {
   return [];
 }
 
+// insights API の1ページ上限（OpenAPI: limit は最大100）。
+const PAGE_SIZE = 100;
+// 暴走防止の安全上限（最大 100×50=5000件）。実運用の insight 数は数十〜数百規模。
+const MAX_PAGES = 50;
+
 /**
  * 対象会社の X insight を列挙し DB 行へ整形する。
  * 実 API 裏取り済み: insights は会社スコープ（`/companies/{id}/insights`）で、トピック直下ではない。
- * ※ ページング未対応（オープン事項）。
+ *
+ * ページング必須: デフォルト limit だと先頭ページ（実測10件）しか取れず、会社に56件あっても
+ * ノートと重なる insight を取りこぼしてバッジが付かなかった実例がある。limit=100 で
+ * 1-based page を、返る件数が1ページ上限未満（＝最終ページ）になるまで順に辿る。
+ * 実測: page は 1-based で連続ページが重複なく別データを返し、範囲外 page は 4xx ではなく
+ * 空配列を返す（＝最終ページ判定が効き、余分な1リクエストでも throw しない）。
  */
 export async function getInsights(now: number = Date.now()): Promise<SearchlightInsightRow[]> {
   const cfg = searchlightEnv();
   const token = await getToken();
-  const res = await fetch(
-    `${cfg.SEARCHLIGHT_BASE_URL}/companies/${cfg.SEARCHLIGHT_COMPANY_ID}/insights?platform=x`,
-    { headers: { authorization: `Bearer ${token}` } },
-  );
-  if (!res.ok) throw new Error(`Searchlight insights 取得失敗: ${res.status}`);
-  const body: unknown = await res.json();
-  const items = extractItems(body);
   const rows: SearchlightInsightRow[] = [];
-  for (const raw of items) {
-    const row = toBadgeRow(raw, now);
-    if (row) rows.push(row);
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const res = await fetch(
+      `${cfg.SEARCHLIGHT_BASE_URL}/companies/${cfg.SEARCHLIGHT_COMPANY_ID}/insights?platform=x&limit=${PAGE_SIZE}&page=${page}`,
+      { headers: { authorization: `Bearer ${token}` } },
+    );
+    if (!res.ok) throw new Error(`Searchlight insights 取得失敗: ${res.status}`);
+    const body: unknown = await res.json();
+    const items = extractItems(body);
+    for (const raw of items) {
+      const row = toBadgeRow(raw, now);
+      if (row) rows.push(row);
+    }
+    // 最終ページ（1ページ上限未満）に達したら停止。
+    if (items.length < PAGE_SIZE) break;
   }
   return rows;
 }
