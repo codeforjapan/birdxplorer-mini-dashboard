@@ -7,6 +7,16 @@
  * Vercel Blob は既定で公開読み取り可能なため、UIで非表示にするだけでは不十分。
  */
 
+/** Searchlight の X insight（tweet_id で結合）に基づく付加バッジ。マッチした時のみ Note に存在する。 */
+export type SearchlightBadge = {
+  stance: "SPREADING" | "DEBUNKING" | "REPORTING" | "NEUTRAL";
+  urgency: "NONE" | "LOW" | "MEDIUM" | "HIGH";
+  claimType: string;
+  officialRelationship: string;
+  /** 公式URL（公開情報）。無ければ null。 */
+  officialUrl: string | null;
+};
+
 export type NoteStatus =
   | "NEEDS_MORE_RATINGS"
   | "CURRENTLY_RATED_HELPFUL"
@@ -47,6 +57,12 @@ export type Note = {
   classifiedAt: number;
   /** プロンプト改訂時に再分類対象を判定するため */
   classifierVersion: string;
+
+  /**
+   * Searchlight の X insight に基づく付加バッジ。tweet_id(=postId) がマッチした時のみ付く。
+   * 列挙値と公式URLのみで PII を含まないため公開 Blob に載せてよい（非永続ルール順守）。
+   */
+  searchlight?: SearchlightBadge;
 };
 
 export type Cluster = {
@@ -105,4 +121,4 @@ export type JobRun = {
   error: string | null;
 };
 
-export type JobName = "ingest" | "recluster" | "refresh-status" | "report" | "reclassify";
+export type JobName = "ingest" | "recluster" | "refresh-status" | "report" | "reclassify" | "searchlight-sync";

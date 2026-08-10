@@ -41,8 +41,18 @@ const cronSchema = z.object({
   CRON_SECRET: z.string().min(1),
 });
 
+const searchlightSchema = z.object({
+  SEARCHLIGHT_BASE_URL: z
+    .url()
+    .transform((v) => v.replace(/\/+$/, "")),
+  SEARCHLIGHT_CLIENT_ID: z.string().min(1),
+  SEARCHLIGHT_CLIENT_SECRET: z.string().min(1),
+  SEARCHLIGHT_TOPIC_ID: z.string().min(1),
+});
+
 export type CoreEnv = z.infer<typeof coreSchema>;
 export type LlmEnv = z.infer<typeof llmSchema>;
+export type SearchlightEnv = z.infer<typeof searchlightSchema>;
 
 function parse<T extends z.ZodType>(schema: T, label: string): z.infer<T> {
   const result = schema.safeParse(process.env);
@@ -69,6 +79,16 @@ export function llmEnv(): LlmEnv {
 
 export function cronSecret(): string {
   return parse(cronSchema, "cron").CRON_SECRET;
+}
+
+let searchlightCache: SearchlightEnv | undefined;
+/**
+ * Searchlight の設定。searchlight-sync ジョブ実行時のみ必須。
+ * 他ジョブ・ビルド時に評価しないよう遅延評価する（未設定環境を壊さない）。
+ */
+export function searchlightEnv(): SearchlightEnv {
+  searchlightCache ??= parse(searchlightSchema, "Searchlight");
+  return searchlightCache;
 }
 
 /**
