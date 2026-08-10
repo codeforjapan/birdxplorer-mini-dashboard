@@ -1,9 +1,13 @@
 import { searchlightEnv } from "./env";
 
-/** DB 行の形。migrations/002_searchlight.sql と一致させる。 */
+/**
+ * DB 行の形。migrations/002_searchlight.sql + 003_searchlight_stance_nullable.sql と一致させる。
+ * stance は分析が付与しないことがある（実データで stance=null・urgency=MEDIUM・
+ * official_source_relationship=insufficient_official_evidence の有用な insight を確認）ため null 許容。
+ */
 export type SearchlightInsightRow = {
   tweet_id: string;
-  stance: "SPREADING" | "DEBUNKING" | "REPORTING" | "NEUTRAL";
+  stance: "SPREADING" | "DEBUNKING" | "REPORTING" | "NEUTRAL" | null;
   urgency: "NONE" | "LOW" | "MEDIUM" | "HIGH";
   claim_type: string;
   official_source_relationship: string;
@@ -57,11 +61,14 @@ export function toBadgeRow(raw: unknown, now: number): SearchlightInsightRow | n
   const payload = raw.payload;
   if (!isRecord(payload)) return null;
 
+  // stance は分析が付与しないことがある（実例: HAARP insight は stance=null でも
+  // urgency=MEDIUM・rel=insufficient_official_evidence・公式URL付きで有用）ため任意項目にする。
+  // urgency / claim_type / official_source_relationship はバッジの根拠として引き続き必須。
   const stance = oneOf(payload.stance, STANCES);
   const urgency = oneOf(payload.urgency, URGENCIES);
   const claimType = isEnumToken(payload.claim_type) ? payload.claim_type : null;
   const rel = isEnumToken(payload.official_source_relationship) ? payload.official_source_relationship : null;
-  if (!stance || !urgency || !claimType || !rel) return null;
+  if (!urgency || !claimType || !rel) return null;
 
   return {
     tweet_id: tweetId,
