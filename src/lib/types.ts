@@ -11,7 +11,7 @@
 export type SearchlightBadge = {
   stance: "SPREADING" | "DEBUNKING" | "REPORTING" | "NEUTRAL";
   urgency: "NONE" | "LOW" | "MEDIUM" | "HIGH";
-  claimType: string;
+  // claimType は UI が表示に使わないため公開契約から除外（データ最小化）。DB 行(SearchlightInsightRow)には残す。
   officialRelationship: string;
   /** 公式URL（公開情報）。無ければ null。 */
   officialUrl: string | null;

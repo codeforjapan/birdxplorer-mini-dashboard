@@ -20,6 +20,17 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 function oneOf<T extends readonly string[]>(v: unknown, allowed: T): T[number] | null {
   return typeof v === "string" && (allowed as readonly string[]).includes(v) ? (v as T[number]) : null;
 }
+/**
+ * claim_type / official_source_relationship は正確な enum 値集合が未確定（実API裏取り待ち、オープン事項）。
+ * そのため値集合ではなく「列挙トークン形式」（大文字英数字とアンダースコアのみ、1〜64文字）を強制する。
+ * RUMOR_OR_UNVERIFIED や CONFLICTS のようなトークンは通し、空白・句読点を含む AI 自由文は弾く。
+ * 過剰に弾いてもバッジが出ないだけの fail-safe（既存表示への影響なし）であり、
+ * 自由文を公開 Blob に載せない不変条件を優先する。
+ * 注意: 実際の enum 値の大文字/記号仕様が確定したら（オープン事項）このガードを見直すこと。
+ */
+function isEnumToken(v: unknown): v is string {
+  return typeof v === "string" && /^[A-Z0-9_]{1,64}$/.test(v);
+}
 /** official_source_evidence（URL文字列 or その配列）から最初の妥当な https URL を1件取る。 */
 function firstUrl(v: unknown): string | null {
   const arr = Array.isArray(v) ? v : [v];
@@ -43,8 +54,8 @@ export function toBadgeRow(raw: unknown, now: number): SearchlightInsightRow | n
 
   const stance = oneOf(payload.stance, STANCES);
   const urgency = oneOf(payload.urgency, URGENCIES);
-  const claimType = typeof payload.claim_type === "string" ? payload.claim_type : null;
-  const rel = typeof payload.official_source_relationship === "string" ? payload.official_source_relationship : null;
+  const claimType = isEnumToken(payload.claim_type) ? payload.claim_type : null;
+  const rel = isEnumToken(payload.official_source_relationship) ? payload.official_source_relationship : null;
   if (!stance || !urgency || !claimType || !rel) return null;
 
   return {

@@ -296,7 +296,6 @@ function mapSearchlightRow(row: SearchlightInsightRow): SearchlightBadge {
   return {
     stance: row.stance,
     urgency: row.urgency,
-    claimType: row.claim_type,
     officialRelationship: row.official_source_relationship,
     officialUrl: row.official_source_url,
   };
