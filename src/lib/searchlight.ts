@@ -120,6 +120,8 @@ const MAX_PAGES = 50;
  * ページング必須: デフォルト limit だと先頭ページ（実測10件）しか取れず、会社に56件あっても
  * ノートと重なる insight を取りこぼしてバッジが付かなかった実例がある。limit=100 で
  * 1-based page を、返る件数が1ページ上限未満（＝最終ページ）になるまで順に辿る。
+ * 実測: page は 1-based で連続ページが重複なく別データを返し、範囲外 page は 4xx ではなく
+ * 空配列を返す（＝最終ページ判定が効き、余分な1リクエストでも throw しない）。
  */
 export async function getInsights(now: number = Date.now()): Promise<SearchlightInsightRow[]> {
   const cfg = searchlightEnv();
