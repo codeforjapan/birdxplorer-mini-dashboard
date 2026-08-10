@@ -3,8 +3,9 @@ import { resolveClusterId } from "./clusters";
 import { BIN_MINUTES } from "./constants";
 import { bigintToNumber, nullableBigintToNumber, sql } from "./db";
 import { env } from "./env";
+import type { SearchlightInsightRow } from "./searchlight";
 import { binStart, nextBin } from "./time";
-import type { Cluster, ClustersFile, Note, NotesFile, TimelineBin, TimelineFile } from "./types";
+import type { Cluster, ClustersFile, Note, NotesFile, SearchlightBadge, TimelineBin, TimelineFile } from "./types";
 import type { NoteStatusRefresh } from "./birdxplorer";
 
 /**
@@ -102,14 +103,20 @@ export async function readClusters(): Promise<Cluster[]> {
  * 漏れる）。REPEATABLE READ の読み取り専用トランザクションで両方読むことで、
  * 常にどちらかの世代の一貫したペアになることを保証する。
  */
-async function readSnapshot(): Promise<{ notes: Note[]; clusters: Cluster[] }> {
-  const [clusterRows, noteRows] = await sql().transaction(
-    (txn) => [txn`select * from clusters`, txn`select * from notes`],
+async function readSnapshot(): Promise<{ notes: Note[]; clusters: Cluster[]; searchlight: Map<string, SearchlightBadge> }> {
+  const [clusterRows, noteRows, slRows] = await sql().transaction(
+    (txn) => [txn`select * from clusters`, txn`select * from notes`, txn`select * from searchlight_insights`],
     { isolationLevel: "RepeatableRead", readOnly: true },
   );
+  const searchlight = new Map<string, SearchlightBadge>();
+  for (const r of slRows) {
+    const row = r as unknown as SearchlightInsightRow;
+    searchlight.set(row.tweet_id, mapSearchlightRow(row));
+  }
   return {
     clusters: clusterRows.map((r) => mapClusterRow(r as unknown as ClusterRow)),
     notes: noteRows.map((r) => mapNoteRow(r as unknown as NoteRow)),
+    searchlight,
   };
 }
 
@@ -262,6 +269,39 @@ export async function applyStatusRefresh(
   );
 }
 
+/** Searchlight insight を tweet_id で upsert する（incoming が勝つ）。 */
+export async function upsertSearchlightInsights(rows: readonly SearchlightInsightRow[]): Promise<void> {
+  if (rows.length === 0) return;
+  await sql().transaction((txn) =>
+    rows.map((r) =>
+      txn.query(
+        `insert into searchlight_insights
+           (tweet_id, stance, urgency, claim_type, official_source_relationship, official_source_url, synced_at)
+         values ($1, $2, $3, $4, $5, $6, $7)
+         on conflict (tweet_id) do update set
+           stance = excluded.stance,
+           urgency = excluded.urgency,
+           claim_type = excluded.claim_type,
+           official_source_relationship = excluded.official_source_relationship,
+           official_source_url = excluded.official_source_url,
+           synced_at = excluded.synced_at`,
+        [r.tweet_id, r.stance, r.urgency, r.claim_type, r.official_source_relationship, r.official_source_url, r.synced_at],
+      ),
+    ),
+  );
+}
+
+/** searchlight_insights の1行を SearchlightBadge（UI向け camelCase）へ変換する。 */
+function mapSearchlightRow(row: SearchlightInsightRow): SearchlightBadge {
+  return {
+    stance: row.stance,
+    urgency: row.urgency,
+    claimType: row.claim_type,
+    officialRelationship: row.official_source_relationship,
+    officialUrl: row.official_source_url,
+  };
+}
+
 // ── タイムライン集計 ──────────────────────────────────────────
 
 const BIN_MS = BIN_MINUTES * 60 * 1000;
@@ -339,9 +379,19 @@ export function buildTimeline(notes: readonly Note[], clusters: readonly Cluster
  * （途中でプロセスが落ちても、最悪 timeline が一世代古いままになるだけで済む）
  */
 export async function publishSnapshot(now: number = Date.now()): Promise<void> {
-  const { notes, clusters } = await readSnapshot();
+  const { notes, clusters, searchlight } = await readSnapshot();
 
-  const notesFile: NotesFile = { generatedAt: now, notes };
+  // tweet_id(=postId) がマッチしたノートだけ searchlight を付ける。未マッチは付けない
+  // （＝ JSON 形は従来と不変。UI は searchlight があるノートだけチップを出す）。
+  const notesWithBadges: Note[] =
+    searchlight.size === 0
+      ? notes
+      : notes.map((n) => {
+          const badge = searchlight.get(n.postId);
+          return badge ? { ...n, searchlight: badge } : n;
+        });
+
+  const notesFile: NotesFile = { generatedAt: now, notes: notesWithBadges };
   const clustersFile: ClustersFile = { generatedAt: now, clusters };
 
   await writeJson(PATH.notes, notesFile);
