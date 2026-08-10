@@ -2,7 +2,7 @@ import { activeClusters, clusterLookup, resolveClusterId } from "./clusters";
 import { clusterColor, MAX_DISTINCT_CLUSTERS, OTHER_CLUSTER_COLOR, OTHER_CLUSTER_ID } from "./constants";
 import { isMonitoringEnded } from "./env";
 import { nextBin } from "./time";
-import type { Cluster, Note, TimelineBin, TimelineFile } from "./types";
+import type { Cluster, Note, SearchlightBadge, TimelineBin, TimelineFile } from "./types";
 
 /**
  * 現在時刻の取得を1箇所に集約する。
@@ -302,6 +302,8 @@ export type ViewNote = {
    * 常に null にし、値そのものをprops(RSCのシリアライズ経路)に乗せない。
    */
   adminInfo: { relevance: number; excludeReason: string | null } | null;
+  /** Searchlight バッジ（Note からそのまま透過）。マッチした時のみ存在。 */
+  searchlight?: SearchlightBadge;
 };
 
 export function toViewNotes(
@@ -325,6 +327,7 @@ export function toViewNotes(
         : null,
       adminInfo:
         showAdminInfo && n.excluded ? { relevance: n.relevance, excludeReason: n.excludeReason } : null,
+      searchlight: n.searchlight,
     };
   });
 }
