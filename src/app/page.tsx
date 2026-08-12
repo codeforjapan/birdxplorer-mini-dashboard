@@ -2,7 +2,7 @@ import { BIN_MINUTES, MAINSHOCK_AT } from "@/lib/constants";
 import { PATH, listDailyReports, readJson, readText } from "@/lib/blob";
 import { generateMock, shouldUseMock } from "@/lib/mock";
 import { hhmm, mmddhhmm, stampJst } from "@/lib/time";
-import type { ClustersFile, NotesFile, TimelineFile } from "@/lib/types";
+import type { ClustersFile, CrossPostsFile, NotesFile, TimelineFile } from "@/lib/types";
 import {
   buildAllDisplayClusters,
   buildDisplayClusters,
@@ -14,6 +14,7 @@ import {
   toViewNotes,
   visibleNotes,
 } from "@/lib/view";
+import { CrossPlatformSection } from "./_components/CrossPlatformSection";
 import { FetchFailureNotice } from "./_components/FetchFailureNotice";
 import { Footer } from "./_components/Footer";
 import { Header } from "./_components/Header";
@@ -36,6 +37,7 @@ export default async function Page({ searchParams }: { searchParams: SearchParam
   let notesFile: NotesFile | null = null;
   let clustersFile: ClustersFile | null = null;
   let timelineFile: TimelineFile | null = null;
+  let crossPostsFile: CrossPostsFile | null = null;
   let cumulativeMarkdown: string | null = null;
   let archiveDates: string[] = [];
   let fetchFailed = false;
@@ -49,10 +51,11 @@ export default async function Page({ searchParams }: { searchParams: SearchParam
     archiveDates = ["2026-07-28"];
   } else {
     try {
-      [notesFile, clustersFile, timelineFile, cumulativeMarkdown, archiveDates] = await Promise.all([
+      [notesFile, clustersFile, timelineFile, crossPostsFile, cumulativeMarkdown, archiveDates] = await Promise.all([
         readJson<NotesFile>(PATH.notes),
         readJson<ClustersFile>(PATH.clusters),
         readJson<TimelineFile>(PATH.timeline),
+        readJson<CrossPostsFile>(PATH.crossPosts),
         readText(PATH.cumulativeReport),
         listDailyReports(),
       ]);
@@ -111,6 +114,10 @@ export default async function Page({ searchParams }: { searchParams: SearchParam
         mainshockAt={MAINSHOCK_AT}
         initialSelectedIndex={peakBinIndex(timeline.bins)}
       />
+
+      {crossPostsFile && crossPostsFile.posts.length > 0 && (
+        <CrossPlatformSection posts={crossPostsFile.posts} />
+      )}
 
       {cumulativeMarkdown && (
         <ReportSection
