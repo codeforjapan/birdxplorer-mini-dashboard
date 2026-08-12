@@ -122,4 +122,26 @@ export type JobRun = {
   error: string | null;
 };
 
+export type CrossPlatform = "youtube" | "tiktok" | "threads" | "web";
+
+/** 非X の Searchlight 分析結果（独立セクション用・公開 Blob に載る）。 */
+export type CrossPost = {
+  insightId: string;
+  platform: CrossPlatform;
+  url: string;
+  stance: "SPREADING" | "DEBUNKING" | "REPORTING" | "NEUTRAL" | null;
+  urgency: "NONE" | "LOW" | "MEDIUM" | "HIGH";
+  claimType: string;
+  officialRelationship: string;
+  officialUrl: string | null;
+  claimSummary: string;
+  /** epoch ms。元投稿の公開時刻。無ければ null。 */
+  publishedAt: number | null;
+};
+
+export type CrossPostsFile = {
+  generatedAt: number;
+  posts: CrossPost[];
+};
+
 export type JobName = "ingest" | "recluster" | "refresh-status" | "report" | "reclassify" | "searchlight-sync";
