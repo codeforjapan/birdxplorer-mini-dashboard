@@ -3,9 +3,19 @@ import { resolveClusterId } from "./clusters";
 import { BIN_MINUTES } from "./constants";
 import { bigintToNumber, nullableBigintToNumber, sql } from "./db";
 import { env } from "./env";
-import type { SearchlightInsightRow } from "./searchlight";
+import type { CrossPostRow, SearchlightInsightRow } from "./searchlight";
 import { binStart, nextBin } from "./time";
-import type { Cluster, ClustersFile, Note, NotesFile, SearchlightBadge, TimelineBin, TimelineFile } from "./types";
+import type {
+  Cluster,
+  ClustersFile,
+  CrossPost,
+  CrossPostsFile,
+  Note,
+  NotesFile,
+  SearchlightBadge,
+  TimelineBin,
+  TimelineFile,
+} from "./types";
 import type { NoteStatusRefresh } from "./birdxplorer";
 
 /**
@@ -50,6 +60,21 @@ type ClusterRow = {
   alias_of: string | null;
 };
 
+// searchlight_cross_posts の行形（migrations/004_searchlight_cross_posts.sql と一致）。
+// published_at は bigint 列なので他の bigint 同様に文字列で返り得る。
+type CrossPostRowDb = {
+  insight_id: string;
+  platform: string;
+  url: string;
+  stance: string | null;
+  urgency: string;
+  claim_type: string;
+  official_source_relationship: string;
+  official_source_url: string | null;
+  claim_summary: string;
+  published_at: string | number | null;
+};
+
 function mapNoteRow(row: NoteRow): Note {
   return {
     noteId: row.note_id,
@@ -83,6 +108,26 @@ function mapClusterRow(row: ClusterRow): Cluster {
   };
 }
 
+/**
+ * searchlight_cross_posts の1行を CrossPost（UI向け camelCase）へ変換する。
+ * 非永続ルール: 列挙値・claimSummary・URL のみを転記し、投稿本文・著者は扱わない
+ * （そもそも DB 行にも入っていない。src/lib/searchlight.ts の toCrossRow 参照）。
+ */
+function mapCrossRow(row: CrossPostRowDb): CrossPost {
+  return {
+    insightId: row.insight_id,
+    platform: row.platform as CrossPost["platform"],
+    url: row.url,
+    stance: row.stance as CrossPost["stance"],
+    urgency: row.urgency as CrossPost["urgency"],
+    claimType: row.claim_type,
+    officialRelationship: row.official_source_relationship,
+    officialUrl: row.official_source_url,
+    claimSummary: row.claim_summary,
+    publishedAt: nullableBigintToNumber(row.published_at),
+  };
+}
+
 // ── 読み取り ─────────────────────────────────────────────────
 
 export async function readNotes(): Promise<Note[]> {
@@ -103,9 +148,19 @@ export async function readClusters(): Promise<Cluster[]> {
  * 漏れる）。REPEATABLE READ の読み取り専用トランザクションで両方読むことで、
  * 常にどちらかの世代の一貫したペアになることを保証する。
  */
-async function readSnapshot(): Promise<{ notes: Note[]; clusters: Cluster[]; searchlight: Map<string, SearchlightBadge> }> {
-  const [clusterRows, noteRows, slRows] = await sql().transaction(
-    (txn) => [txn`select * from clusters`, txn`select * from notes`, txn`select * from searchlight_insights`],
+async function readSnapshot(): Promise<{
+  notes: Note[];
+  clusters: Cluster[];
+  searchlight: Map<string, SearchlightBadge>;
+  crossPosts: CrossPost[];
+}> {
+  const [clusterRows, noteRows, slRows, crossRows] = await sql().transaction(
+    (txn) => [
+      txn`select * from clusters`,
+      txn`select * from notes`,
+      txn`select * from searchlight_insights`,
+      txn`select * from searchlight_cross_posts`,
+    ],
     { isolationLevel: "RepeatableRead", readOnly: true },
   );
   const searchlight = new Map<string, SearchlightBadge>();
@@ -117,6 +172,7 @@ async function readSnapshot(): Promise<{ notes: Note[]; clusters: Cluster[]; sea
     clusters: clusterRows.map((r) => mapClusterRow(r as unknown as ClusterRow)),
     notes: noteRows.map((r) => mapNoteRow(r as unknown as NoteRow)),
     searchlight,
+    crossPosts: crossRows.map((r) => mapCrossRow(r as unknown as CrossPostRowDb)),
   };
 }
 
@@ -291,6 +347,49 @@ export async function upsertSearchlightInsights(rows: readonly SearchlightInsigh
   );
 }
 
+/**
+ * 非X（youtube/tiktok/threads/web）の insight を insight_id で upsert する（incoming が勝つ）。
+ * upsertSearchlightInsights と同じ理由でバッチ全体を1トランザクションにまとめる
+ * （publishSnapshot に半端なバッチを見せないため）。
+ */
+export async function upsertCrossPosts(rows: readonly CrossPostRow[]): Promise<void> {
+  if (rows.length === 0) return;
+  await sql().transaction((txn) =>
+    rows.map((r) =>
+      txn.query(
+        `insert into searchlight_cross_posts
+           (insight_id, platform, url, stance, urgency, claim_type,
+            official_source_relationship, official_source_url, claim_summary, published_at, synced_at)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+         on conflict (insight_id) do update set
+           platform = excluded.platform,
+           url = excluded.url,
+           stance = excluded.stance,
+           urgency = excluded.urgency,
+           claim_type = excluded.claim_type,
+           official_source_relationship = excluded.official_source_relationship,
+           official_source_url = excluded.official_source_url,
+           claim_summary = excluded.claim_summary,
+           published_at = excluded.published_at,
+           synced_at = excluded.synced_at`,
+        [
+          r.insight_id,
+          r.platform,
+          r.url,
+          r.stance,
+          r.urgency,
+          r.claim_type,
+          r.official_source_relationship,
+          r.official_source_url,
+          r.claim_summary,
+          r.published_at,
+          r.synced_at,
+        ],
+      ),
+    ),
+  );
+}
+
 /** searchlight_insights の1行を SearchlightBadge（UI向け camelCase）へ変換する。 */
 function mapSearchlightRow(row: SearchlightInsightRow): SearchlightBadge {
   return {
@@ -378,7 +477,7 @@ export function buildTimeline(notes: readonly Note[], clusters: readonly Cluster
  * （途中でプロセスが落ちても、最悪 timeline が一世代古いままになるだけで済む）
  */
 export async function publishSnapshot(now: number = Date.now()): Promise<void> {
-  const { notes, clusters, searchlight } = await readSnapshot();
+  const { notes, clusters, searchlight, crossPosts } = await readSnapshot();
 
   // tweet_id(=postId) がマッチしたノートだけ searchlight を付ける。未マッチは付けない
   // （＝ JSON 形は従来と不変。UI は searchlight があるノートだけチップを出す）。
@@ -398,4 +497,16 @@ export async function publishSnapshot(now: number = Date.now()): Promise<void> {
 
   const timeline = buildTimeline(notes, clusters, now);
   await writeJson(PATH.timeline, timeline);
+
+  // 非X: notes/clusters/timeline とは独立したセクションなので整合性トランザクションは不要。
+  // SPREADING を最優先で見せ、以降 DEBUNKING > REPORTING > その他の順。
+  // 同ランク内は publishedAt 降順（新しい投稿を上に。null は元投稿の公開時刻が取れなかった
+  // ケースなので末尾に回す）。
+  const stanceRank = (s: CrossPost["stance"]): number =>
+    s === "SPREADING" ? 0 : s === "DEBUNKING" ? 1 : s === "REPORTING" ? 2 : 3;
+  const sortedCross = [...crossPosts].sort(
+    (a, b) => stanceRank(a.stance) - stanceRank(b.stance) || (b.publishedAt ?? 0) - (a.publishedAt ?? 0),
+  );
+  const crossFile: CrossPostsFile = { generatedAt: now, posts: sortedCross };
+  await writeJson(PATH.crossPosts, crossFile);
 }
