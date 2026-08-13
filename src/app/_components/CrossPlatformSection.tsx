@@ -163,7 +163,7 @@ function PostRow({ p }: { p: CrossPost }) {
 /** 規模（最大表示/最大いいね/指標なし）を短い文言に整形する。 */
 function scaleText(s: PfSummary["scale"]): string {
   if (s.kind === "views" && s.max !== null) return `最大表示 ${fmtCount(s.max)}`;
-  if (s.kind === "likes" && s.max !== null) return `最大 いいね${fmtCount(s.max)}`;
+  if (s.kind === "likes" && s.max !== null) return `最大いいね ${fmtCount(s.max)}`;
   return "指標なし";
 }
 
@@ -180,8 +180,10 @@ function PfCard({
   return (
     <button
       type="button"
+      id={`crossplatform-tab-${s.platform}`}
       role="tab"
       aria-selected={selected}
+      aria-controls="crossplatform-feed"
       onClick={onSelect}
       className={`rounded-xl border border-line bg-card p-3 text-left transition hover:border-muted ${
         selected ? "ring-2 ring-heading" : ""
@@ -246,7 +248,7 @@ function PfCard({
 function PfGroup({ label, count, posts }: { label: React.ReactNode; count: number; posts: CrossPost[] }) {
   const hidden = count - posts.length;
   return (
-    <div className="mt-4 first:mt-0">
+    <div className="mt-4">
       <div className="flex items-center gap-2 border-b-2 border-line pb-1.5 text-[13px] font-semibold text-heading">
         {label}
         <span className="ml-auto text-[11px] font-normal text-label">{count}件</span>
@@ -332,26 +334,32 @@ export function CrossPlatformSection({ posts }: { posts: CrossPost[] }) {
         )}
       </div>
 
-      {/* 下段B: PFごとの投稿一覧 */}
-      {selected ? (
-        <>
-          <PfGroup label={pfHeadLabel(selected)} count={selectedPosts.length} posts={selectedPosts.slice(0, visible)} />
-          {selectedPosts.length > visible && (
-            <button
-              type="button"
-              onClick={() => setVisible((v) => v + FILTER_STEP)}
-              className="mt-3 rounded-full border border-line bg-block px-3 py-1 text-[11px] text-label hover:text-body"
-            >
-              もっと見る（残り {selectedPosts.length - visible} 件）
-            </button>
-          )}
-        </>
-      ) : (
-        CROSS_PF_ORDER.filter((pf) => byPlatform.has(pf)).map((pf) => {
-          const all = byPlatform.get(pf) ?? [];
-          return <PfGroup key={pf} label={pfHeadLabel(pf)} count={all.length} posts={all.slice(0, ALL_LIMIT)} />;
-        })
-      )}
+      {/* 下段B: PFごとの投稿一覧（上段のカード＝タブに対応する tabpanel） */}
+      <div
+        id="crossplatform-feed"
+        role="tabpanel"
+        aria-labelledby={selected ? `crossplatform-tab-${selected}` : undefined}
+      >
+        {selected ? (
+          <>
+            <PfGroup label={pfHeadLabel(selected)} count={selectedPosts.length} posts={selectedPosts.slice(0, visible)} />
+            {selectedPosts.length > visible && (
+              <button
+                type="button"
+                onClick={() => setVisible((v) => v + FILTER_STEP)}
+                className="mt-3 rounded-full border border-line bg-block px-3 py-1 text-[11px] text-label hover:text-body"
+              >
+                もっと見る（残り {selectedPosts.length - visible} 件）
+              </button>
+            )}
+          </>
+        ) : (
+          CROSS_PF_ORDER.filter((pf) => byPlatform.has(pf)).map((pf) => {
+            const all = byPlatform.get(pf) ?? [];
+            return <PfGroup key={pf} label={pfHeadLabel(pf)} count={all.length} posts={all.slice(0, ALL_LIMIT)} />;
+          })
+        )}
+      </div>
     </section>
   );
 }
