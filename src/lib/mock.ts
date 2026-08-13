@@ -183,12 +183,12 @@ export type MockData = {
   timeline: TimelineFile;
   /** 累積レポート相当の疑似Markdown。ReportSection のクラスタブロック分岐の確認用。 */
   report: string;
-  /** 非X独立セクション(CrossPlatformSection)のレビュー用疑似データ。 */
+  /** 非X独立セクション(CrossPlatformTab)のレビュー用疑似データ。 */
   crossPosts: CrossPostsFile;
 };
 
 /**
- * CrossPlatformSection の見た目確認用フィクスチャ。
+ * CrossPlatformTab の見た目確認用フィクスチャ。
  * stance/urgency/公式リンクの分岐に加え、指標(views/likes/comments/shares/collects/flame_rate)の
  * PF別偏在(youtube/tiktok は充実・threads は likes のみ・web は指標なし)も再現する。
  * 並びは publishSnapshot と同じ「拡散源→打消し→報道→その他、その後 published_at 降順」を模す。

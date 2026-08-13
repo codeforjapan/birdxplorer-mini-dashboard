@@ -363,7 +363,7 @@ export function statusLabel(status: Note["currentStatus"]): string {
 }
 
 // ── 非X（クロスプラットフォーム）PF別サマリー ──
-// UI（CrossPlatformSection）から集計を切り離した純関数。カード＝俯瞰の材料をPF単位で返す。
+// UI（CrossPlatformTab）から集計を切り離した純関数。カード＝俯瞰の材料をPF単位で返す。
 // 集計は全件（crossPostsFile.posts）を対象にする。表示上の件数制限は集計に影響させない。
 
 /** カード＝タブの並び順（固定）。件数0のPFは buildCrossPlatformSummary が除外する。 */
