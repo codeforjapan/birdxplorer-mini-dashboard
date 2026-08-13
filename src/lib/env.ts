@@ -93,6 +93,15 @@ export function searchlightEnv(): SearchlightEnv {
 }
 
 /**
+ * Searchlight 連携が設定されているか。この連携はメイン機能ではなく任意の拡張であり、
+ * 4つの環境変数を設定するかどうかだけでON/OFFを切り替えられるようにする
+ * （vercel.json の cron 設定自体は変更不要）。searchlightEnv() と異なり例外を投げない。
+ */
+export function hasSearchlightConfig(): boolean {
+  return searchlightSchema.safeParse(process.env).success;
+}
+
+/**
  * 運用期間を過ぎているか。cron ハンドラは真なら即 no-op で返す。
  * MONITOR_END_DATE の当日いっぱいまでは稼働させ、翌日 00:00 JST で停止する。
  */
