@@ -1,6 +1,15 @@
 import { BIN_MINUTES, MAINSHOCK_AT } from "./constants";
 import { binStart, nextBin } from "./time";
-import type { Cluster, ClustersFile, Note, NotesFile, TimelineBin, TimelineFile } from "./types";
+import type {
+  Cluster,
+  ClustersFile,
+  CrossPost,
+  CrossPostsFile,
+  Note,
+  NotesFile,
+  TimelineBin,
+  TimelineFile,
+} from "./types";
 
 /**
  * 実データが無い段階でもUIをレビューできるようにするための、もっともらしい疑似データ生成器。
@@ -174,7 +183,110 @@ export type MockData = {
   timeline: TimelineFile;
   /** 累積レポート相当の疑似Markdown。ReportSection のクラスタブロック分岐の確認用。 */
   report: string;
+  /** 非X独立セクション(CrossPlatformSection)のレビュー用疑似データ。 */
+  crossPosts: CrossPostsFile;
 };
+
+/**
+ * CrossPlatformSection の見た目確認用フィクスチャ。
+ * stance/urgency/公式リンクの分岐に加え、指標(views/likes/comments/shares/collects/flame_rate)の
+ * PF別偏在(youtube/tiktok は充実・threads は likes のみ・web は指標なし)も再現する。
+ * 並びは publishSnapshot と同じ「拡散源→打消し→報道→その他、その後 published_at 降順」を模す。
+ */
+function mockCrossPosts(generatedAt: number): CrossPostsFile {
+  const h = (n: number) => generatedAt - n * 60 * 60 * 1000;
+  const posts: CrossPost[] = [
+    // ── SPREADING（拡散源）を上位に ──
+    {
+      insightId: "mock_yt_1", platform: "youtube", url: "https://www.youtube.com/watch?v=MOCK0000001",
+      stance: "SPREADING", urgency: "HIGH", claimType: "FALSE_DAMAGE",
+      officialRelationship: "conflicts_with_official", officialUrl: "https://www.jma.go.jp/",
+      claimSummary: "動物園からライオンが脱走したとする動画。園は公式に否定しており、2016年の古い投稿の再拡散とみられる。",
+      publishedAt: h(2), views: 452000, likes: 3820, comments: 512, flameRate: 0.0113,
+    },
+    {
+      insightId: "mock_tt_1", platform: "tiktok", url: "https://www.tiktok.com/@mockuser/video/700000000000000001",
+      stance: "SPREADING", urgency: "HIGH", claimType: "SCAM",
+      officialRelationship: "conflicts_with_official", officialUrl: "https://www.city.kumamoto.jp/",
+      claimSummary: "県公式を装い義援金の振込先を案内する投稿。公式サイトに該当する振込先の記載はない。",
+      publishedAt: h(3), views: 165100, likes: 1885, comments: 494, shares: 69, collects: 129, flameRate: 0.2621,
+    },
+    {
+      insightId: "mock_tt_3", platform: "tiktok", url: "https://www.tiktok.com/@spread/video/700000000000000003",
+      stance: "SPREADING", urgency: "MEDIUM", claimType: "RUMOR",
+      officialRelationship: "conflicts_with_official", officialUrl: "https://www.pref.kumamoto.jp/",
+      claimSummary: "「3日後に本震を超える地震が来る」とする予知動画。気象庁はそうした地震予知はできないとしている。",
+      publishedAt: h(4), views: 88400, likes: 902, comments: 141, shares: 23, collects: 40, flameRate: 0.1563,
+    },
+    {
+      insightId: "mock_th_1", platform: "threads", url: "https://www.threads.com/@mockhandle/post/ABCDEFG0001",
+      stance: "SPREADING", urgency: "MEDIUM", claimType: "RUMOR",
+      officialRelationship: "insufficient_official_evidence", officialUrl: "https://www.city.kumamoto.jp/",
+      claimSummary: "外国人グループが被災した空き家を狙って窃盗しているとする投稿。出典・根拠は示されていない。",
+      publishedAt: h(5), likes: 760,
+    },
+    {
+      insightId: "mock_yt_3", platform: "youtube", url: "https://www.youtube.com/watch?v=MOCK0000003",
+      stance: "SPREADING", urgency: "MEDIUM", claimType: "FALSE_DAMAGE",
+      officialRelationship: "conflicts_with_official", officialUrl: "https://www.jma.go.jp/",
+      claimSummary: "原発から煙が上がっているとする投稿。該当施設に当該設備はなく、公式モニタリング値とも一致しない。",
+      publishedAt: h(6), views: 39800, likes: 640, comments: 96, flameRate: 0.0024,
+    },
+    // ── DEBUNKING（打消し） ──
+    {
+      insightId: "mock_tt_2", platform: "tiktok", url: "https://www.tiktok.com/@another/video/700000000000000002",
+      stance: "DEBUNKING", urgency: "NONE", claimType: "DEBUNK",
+      officialRelationship: "no_official_source", officialUrl: null,
+      claimSummary: "脱走デマは2016年の古い投稿の再拡散だと指摘し、注意を促す打消し投稿。",
+      publishedAt: h(7), views: 21000, likes: 540, comments: 33, shares: 12, collects: 61, flameRate: 0.0611,
+    },
+    {
+      insightId: "mock_yt_2", platform: "youtube", url: "https://www.youtube.com/watch?v=MOCK0000002",
+      stance: "DEBUNKING", urgency: "LOW", claimType: "DEBUNK",
+      officialRelationship: "insufficient_official_evidence", officialUrl: "https://www.pref.kumamoto.jp/",
+      claimSummary: "断水がいつ復旧するかを解説する動画。公式の復旧見込みは未確定で、誤った時期が拡散していると指摘。",
+      publishedAt: h(9), views: 9521, likes: 210, comments: 16, flameRate: 0.0017,
+    },
+    // ── REPORTING（報道） ──
+    {
+      insightId: "mock_web_1", platform: "web", url: "https://example.com/news/mock-article-1",
+      stance: "REPORTING", urgency: "MEDIUM", claimType: "DAMAGE_REPORT",
+      officialRelationship: "insufficient_official_evidence", officialUrl: "https://www.mlit.go.jp/",
+      claimSummary: "九州道の一部区間が全面通行止めのままとする記事。実際には一部区間は既に再開済み。",
+      publishedAt: h(8),
+    },
+    {
+      insightId: "mock_web_3", platform: "web", url: "https://example.com/news/mock-article-3",
+      stance: "REPORTING", urgency: "LOW", claimType: "DAMAGE_REPORT",
+      officialRelationship: "matches_official", officialUrl: null,
+      claimSummary: "災害関連死の疑いを含め39人が死亡、避難所に3652人が避難しているとする報道。",
+      publishedAt: h(10),
+    },
+    {
+      insightId: "mock_th_2", platform: "threads", url: "https://www.threads.com/@handle2/post/ABCDEFG0002",
+      stance: "REPORTING", urgency: "LOW", claimType: "DAMAGE_REPORT",
+      officialRelationship: "no_official_source", officialUrl: null,
+      claimSummary: "八代市が令和8年熊本地震に関する問い合わせ先を案内しているとする投稿。",
+      publishedAt: h(12), likes: 84,
+    },
+    // ── その他（NEUTRAL / stance なし） ──
+    {
+      insightId: "mock_web_2", platform: "web", url: "https://example.com/blog/mock-article-2",
+      stance: "NEUTRAL", urgency: "NONE", claimType: "OTHER",
+      officialRelationship: "no_official_source", officialUrl: null,
+      claimSummary: "断水時に濁った水道水を煮沸なしで飲めるとする記事。専門家は推奨していない。",
+      publishedAt: null,
+    },
+    {
+      insightId: "mock_th_3", platform: "threads", url: "https://www.threads.com/@handle3/post/ABCDEFG0003",
+      stance: null, urgency: "LOW", claimType: "RUMOR",
+      officialRelationship: "no_official_source", officialUrl: null,
+      claimSummary: "避難所が満員で入れないという未確認の投稿。市の発表では空きがある。",
+      publishedAt: h(13), likes: 12,
+    },
+  ];
+  return { generatedAt, posts };
+}
 
 /**
  * 疑似データ一式を生成する。
@@ -308,5 +420,6 @@ export function generateMock(): MockData {
     clusters: { generatedAt, clusters },
     timeline: { generatedAt, binMinutes: BIN_MINUTES, bins },
     report,
+    crossPosts: mockCrossPosts(generatedAt),
   };
 }

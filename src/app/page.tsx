@@ -47,6 +47,7 @@ export default async function Page({ searchParams }: { searchParams: SearchParam
     notesFile = mock.notes;
     clustersFile = mock.clusters;
     timelineFile = mock.timeline;
+    crossPostsFile = mock.crossPosts;
     cumulativeMarkdown = mock.report;
     archiveDates = ["2026-07-28"];
   } else {
