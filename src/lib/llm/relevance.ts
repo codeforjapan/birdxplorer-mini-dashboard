@@ -45,8 +45,8 @@ const RELEVANCE_SYSTEM_PROMPT = `あなたは「${EVENT.llmContextPhrase}」を�
 高いスコア（60以上）にするもの — 今回の${EVENT.llmContextPhraseShort}に少しでも関係するノートすべて。例:
 ${TAXONOMY.relevantExamples}
 
-低いスコア（60未満）にするもの — 今回の${EVENT.llmContextPhraseShort}と【明確に無関係】で、たまたま${TAXONOMY.searchTermExamples}
-等の語を含むだけのもの。例:
+低いスコア（60未満）にするもの — 今回の${EVENT.llmContextPhraseShort}と【明確に無関係】で、たまたま「熊本」
+「地震」等の語を含むだけのもの。例:
 ${TAXONOMY.irrelevantExamples}
 
 迷う場合は【残す（高め）】に倒してください。除外は「明確に無関係」と言い切れるものだけに

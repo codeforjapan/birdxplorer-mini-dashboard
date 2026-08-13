@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import { EVENT } from "@/lib/event";
 
 /**
@@ -18,10 +19,10 @@ export function Footer() {
       <p className="mt-1">
         {EVENT.officialSourcesIntro}
         {EVENT.officialSources.map((source, i) => (
-          <span key={source.url}>
+          <Fragment key={source.url}>
             {i > 0 && "および"}
             <External href={source.url}>{source.label}</External>
-          </span>
+          </Fragment>
         ))}
         の発表を確認してください。{EVENT.officialSourcesDisclaimer}
       </p>

@@ -58,9 +58,19 @@ export const EVENT = {
   ] as const,
 
   // ── LLM プロンプト内で繰り返し使う、イベントを指す主語 ──────────
-  /** 例:「あなたは『{llmContextPhrase}』を起点に流通した情報を観測するモニタの分類器です。」 */
+  /**
+   * 長い形。llm/relevance.ts の冒頭でのみ使う。
+   * 例:「あなたは『{llmContextPhrase}』を起点に流通した情報を観測するモニタの分類器です。」
+   */
   llmContextPhrase: "2026年7月28日に発生した熊本地震",
-  /** 短縮形。例:「今回の{llmContextPhraseShort}に関係するか」 */
+  /**
+   * 短い形（コンパクトな言い回し）。llm/assign.ts・llm/recluster.ts・llm/report.ts の
+   * 冒頭で使う。llmContextPhrase と表現が違うのは元のプロンプトの文言をそのまま保った
+   * ため（挙動を変えないよう、ファイルごとの元の言い回しを保持している）。
+   * 例:「対象はすべて『{llmContextPhraseCompact}』に関連すると判定済みのノートです。」
+   */
+  llmContextPhraseCompact: "2026年7月28日の熊本地震",
+  /** さらに短い、文中に埋め込む形。例:「今回の{llmContextPhraseShort}に関係するか」 */
   llmContextPhraseShort: "熊本地震",
 
   // ── OpenRouter へのアプリ帰属ヘッダー（ランキング・サポート追跡用） ──

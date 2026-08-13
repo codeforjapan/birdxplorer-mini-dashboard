@@ -38,7 +38,7 @@ import { TAXONOMY } from "./taxonomy";
 
 const RECLUSTER_SYSTEM_PROMPT = `あなたはXコミュニティノートのクラスタ（噂の種類ごとのグループ）を整理するアシスタントです。
 
-対象は「${EVENT.llmContextPhrase}」に関する誤情報クラスタです。各クラスタには id・name・description・
+対象は「${EVENT.llmContextPhraseCompact}」に関する誤情報クラスタです。各クラスタには id・name・description・
 所属ノート数・代表的なノート本文のサンプルが渡されます。
 
 あなたの仕事は2つです:

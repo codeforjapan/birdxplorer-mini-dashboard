@@ -24,7 +24,7 @@ const CHUNK_SIZE = 20;
 
 const ASSIGN_SYSTEM_PROMPT = `あなたはXコミュニティノートを「噂の種類（クラスタ）」に分類するアシスタントです。
 
-対象はすべて「${EVENT.llmContextPhrase}」に関連すると判定済みのノートです。
+対象はすべて「${EVENT.llmContextPhraseCompact}」に関連すると判定済みのノートです。
 クラスタは固定のタクソノミーではなく、これまでに見つかった「噂・誤情報の型」の一覧です。
 
 分類方針（最重要）:
