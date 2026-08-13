@@ -322,14 +322,14 @@ function mockCrossPosts(generatedAt: number): CrossPostsFile {
       publishedAt: h(4), views: 81000, likes: 3300, comments: 120, flameRate: 0.0015,
     },
     {
-      insightId: "mock_th_2", platform: "threads", url: "https://www.threads.com/@h/post/ABCDEFG0002",
+      insightId: "mock_th_4", platform: "threads", url: "https://www.threads.com/@h/post/ABCDEFG0002",
       stance: "DEBUNKING", urgency: "LOW", claimType: "IMPERSONATION",
       officialRelationship: "insufficient_official_evidence", officialUrl: "https://www.city.kumamoto.jp/",
       claimSummary: "自治体になりすました募金アカウントへの注意喚起。",
       publishedAt: h(6), likes: 340,
     },
     {
-      insightId: "mock_th_3", platform: "threads", url: "https://www.threads.com/@h/post/ABCDEFG0003",
+      insightId: "mock_th_5", platform: "threads", url: "https://www.threads.com/@h/post/ABCDEFG0003",
       stance: "REPORTING", urgency: "NONE", claimType: "DAMAGE_REPORT",
       officialRelationship: "no_official_source", officialUrl: null,
       claimSummary: "断水エリアの給水所情報のまとめ。",
