@@ -1,6 +1,6 @@
 import { activeClusters, clusterLookup, resolveClusterId } from "./clusters";
 import { claimTypeLabel } from "./claimType";
-import { clusterColor, MAX_DISTINCT_CLUSTERS, OTHER_CLUSTER_COLOR, OTHER_CLUSTER_ID } from "./constants";
+import { BIN_MINUTES, clusterColor, MAX_DISTINCT_CLUSTERS, OTHER_CLUSTER_COLOR, OTHER_CLUSTER_ID } from "./constants";
 import { isMonitoringEnded } from "./env";
 import { nextBin } from "./time";
 import type { Cluster, CrossPlatform, CrossPost, Note, SearchlightBadge, TimelineBin, TimelineFile } from "./types";
@@ -373,18 +373,6 @@ export type CrossStanceCounts = { spreading: number; debunking: number; reportin
 /** 規模はPFで指標が違うため代表を1つ選ぶ: views→likes→なし。 */
 export type CrossScale = { kind: "views" | "likes" | "none"; max: number | null };
 
-export type PfSummary = {
-  platform: CrossPlatform;
-  count: number;
-  stance: CrossStanceCounts;
-  highUrgency: number;
-  officialConflict: number;
-  scale: CrossScale;
-  latestAt: number | null;
-  spark: number[];
-  topClaim: { label: string; count: number } | null;
-};
-
 /** null/NEUTRAL は「中立」に寄せる。 */
 function tallyStance(posts: readonly CrossPost[]): CrossStanceCounts {
   const c: CrossStanceCounts = { spreading: 0, debunking: 0, reporting: 0, neutral: 0 };
@@ -415,28 +403,73 @@ function topClaim(posts: readonly CrossPost[]): { label: string; count: number }
   return { label: claimTypeLabel(top[0]), count: top[1] };
 }
 
-/**
- * 全PF共通の時間軸で投稿量ビンを作る。publishedAt を持つ投稿のみ対象。
- * axisMin/axisMax はセクション全体（全PF）の範囲。件数が2未満、または軸幅0のPFは [] を返す（描かない）。
- */
-function sparkBins(posts: readonly CrossPost[], axisMin: number, axisMax: number, binCount: number): number[] {
+export const CROSS_BIN_MINUTES = BIN_MINUTES;
+export const CROSS_BIN_MS = CROSS_BIN_MINUTES * 60 * 1000;
+
+/** 単系列チャートの1ビン(開始時刻＋件数)。 */
+export type CrossChartBin = { startAt: number; count: number };
+
+/** 一覧の絞り込み条件。binStartAt=null は「PF全体」。 */
+export type CrossFilter = { platform: CrossPlatform; binStartAt: number | null };
+
+/** 全PF共通の時間ビン軸。 */
+export type CrossChartAxis = { startAt: number; binCount: number; binMs: number };
+
+/** 全非X投稿の publishedAt から共通の30分ビン軸を作る。dated が無ければ null。 */
+export function crossChartAxis(posts: readonly CrossPost[]): CrossChartAxis | null {
   const dated = posts.map((p) => p.publishedAt).filter((v): v is number => typeof v === "number");
-  if (dated.length < 2 || axisMax <= axisMin) return [];
-  const bins = new Array<number>(binCount).fill(0);
-  const span = axisMax - axisMin;
-  for (const t of dated) {
-    const idx = Math.min(binCount - 1, Math.floor(((t - axisMin) / span) * binCount));
-    bins[idx] += 1;
+  if (dated.length === 0) return null;
+  const min = Math.min(...dated);
+  const max = Math.max(...dated);
+  const startAt = Math.floor(min / CROSS_BIN_MS) * CROSS_BIN_MS; // ビン境界に丸める
+  const binCount = Math.max(1, Math.floor((max - startAt) / CROSS_BIN_MS) + 1);
+  return { startAt, binCount, binMs: CROSS_BIN_MS };
+}
+
+/** 指定 PF の投稿を共通軸上の30分ビン件数へ。publishedAt null は除外(チャートに置けない)。 */
+function chartBinsFor(posts: readonly CrossPost[], axis: CrossChartAxis | null): CrossChartBin[] {
+  if (!axis) return [];
+  const bins: CrossChartBin[] = Array.from({ length: axis.binCount }, (_, i) => ({
+    startAt: axis.startAt + i * axis.binMs,
+    count: 0,
+  }));
+  for (const p of posts) {
+    if (typeof p.publishedAt !== "number") continue;
+    const idx = Math.floor((p.publishedAt - axis.startAt) / axis.binMs);
+    if (idx >= 0 && idx < bins.length) bins[idx].count += 1;
   }
   return bins;
 }
 
-/** PF別サマリーを CROSS_PF_ORDER 順に返す（件数0のPFは含めない）。 */
-export function buildCrossPlatformSummary(posts: readonly CrossPost[], binCount = 16): PfSummary[] {
-  const dates = posts.map((p) => p.publishedAt).filter((v): v is number => typeof v === "number");
-  const axisMin = dates.length > 0 ? Math.min(...dates) : 0;
-  const axisMax = dates.length > 0 ? Math.max(...dates) : 0;
+/** 一覧を CrossFilter で絞る。filter=null は全件(順序保持)。 */
+export function filterCrossPosts(posts: readonly CrossPost[], filter: CrossFilter | null): CrossPost[] {
+  if (!filter) return [...posts];
+  return posts.filter((p) => {
+    if (p.platform !== filter.platform) return false;
+    if (filter.binStartAt === null) return true;
+    return (
+      typeof p.publishedAt === "number" &&
+      p.publishedAt >= filter.binStartAt &&
+      p.publishedAt < filter.binStartAt + CROSS_BIN_MS
+    );
+  });
+}
 
+export type PfSummary = {
+  platform: CrossPlatform;
+  count: number;
+  stance: CrossStanceCounts;
+  highUrgency: number;
+  officialConflict: number;
+  scale: CrossScale;
+  latestAt: number | null;
+  chartBins: CrossChartBin[];
+  topClaim: { label: string; count: number } | null;
+};
+
+/** PF別サマリー(chartBins は全PF共通軸)を CROSS_PF_ORDER 順に返す(件数0のPFは除外)。 */
+export function buildCrossPlatformSummary(posts: readonly CrossPost[]): PfSummary[] {
+  const axis = crossChartAxis(posts);
   const out: PfSummary[] = [];
   for (const platform of CROSS_PF_ORDER) {
     const group = posts.filter((p) => p.platform === platform);
@@ -450,7 +483,7 @@ export function buildCrossPlatformSummary(posts: readonly CrossPost[], binCount 
       officialConflict: group.filter((p) => /conflict/i.test(p.officialRelationship)).length,
       scale: pickScale(group),
       latestAt: groupDates.length > 0 ? Math.max(...groupDates) : null,
-      spark: sparkBins(group, axisMin, axisMax, binCount),
+      chartBins: chartBinsFor(group, axis),
       topClaim: topClaim(group),
     });
   }
