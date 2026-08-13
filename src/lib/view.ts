@@ -1,8 +1,8 @@
 import { activeClusters, clusterLookup, resolveClusterId } from "./clusters";
 import { claimTypeLabel } from "./claimType";
 import { BIN_MINUTES, clusterColor, MAX_DISTINCT_CLUSTERS, OTHER_CLUSTER_COLOR, OTHER_CLUSTER_ID } from "./constants";
-import { isMonitoringEnded } from "./env";
-import { nextBin } from "./time";
+import { env, isMonitoringEnded } from "./env";
+import { jstDateLabel, nextBin } from "./time";
 import type { Cluster, CrossPlatform, CrossPost, Note, SearchlightBadge, TimelineBin, TimelineFile } from "./types";
 
 /**
@@ -42,6 +42,21 @@ export function safeIsMonitoringEnded(): boolean {
     return isMonitoringEnded();
   } catch {
     return false;
+  }
+}
+
+/**
+ * 収集終了メッセージに使う日付ラベルの安全なラッパー。
+ * MONITOR_END_DATE を表示文言に埋め込む唯一の場所にすることで、
+ * env と表示文言が食い違う事故（環境変数を変えても文言が固定値のまま、等）を防ぐ。
+ * 判定できない環境では表示側で使われない想定（safeIsMonitoringEnded が false を返す）だが、
+ * 念のため null で安全側に倒す。
+ */
+export function safeMonitoringEndedLabel(): string | null {
+  try {
+    return jstDateLabel(env().MONITOR_END_DATE);
+  } catch {
+    return null;
   }
 }
 

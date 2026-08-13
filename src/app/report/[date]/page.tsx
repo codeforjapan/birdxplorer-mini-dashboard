@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { PATH, readJson, readText } from "@/lib/blob";
 import type { ClustersFile, NotesFile } from "@/lib/types";
 import { digestWindow, jstDateStart, mmdd, mmddhhmm } from "@/lib/time";
-import { buildAllDisplayClusters, safeIsMonitoringEnded } from "@/lib/view";
+import { buildAllDisplayClusters, safeIsMonitoringEnded, safeMonitoringEndedLabel } from "@/lib/view";
 import { Footer } from "@/app/_components/Footer";
 import { Header } from "@/app/_components/Header";
 import { ReportSection } from "@/app/_components/ReportSection";
@@ -53,6 +53,7 @@ export default async function DailyReportPage({
         totalNotes={dayNotes.length}
         updatedAtLabel={null}
         monitoringEnded={safeIsMonitoringEnded()}
+        monitoringEndedLabel={safeMonitoringEndedLabel()}
       />
       <ReportSection
         title={`日次ダイジェスト ${mmdd(jstDateStart(date))}`}

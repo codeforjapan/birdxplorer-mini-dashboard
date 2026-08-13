@@ -1,19 +1,28 @@
+import { EVENT } from "@/lib/event";
 import { formatCount } from "@/lib/view";
 
 /**
  * ヘッダー(design.md §6.1)。稼働ドットの明滅は「データが継続収集されている」ことの表現なので、
  * 収集終了後(§9)は静止した灰色ドットに切り替え、終了メッセージを明示する。
- * 本震の日付・イベント名はこのサイトが単一イベント固定のモニタである(spec.md §1)ため、
- * クラスタや件数と違って動的に算出せず、意図的に文言として固定している。
+ * イベント名・発生日時はこのサイトが単一イベント固定のモニタである(spec.md §1)ため、
+ * クラスタや件数と違って動的に算出せず、event.ts の文言をそのまま表示する。
  */
 type HeaderProps = {
   periodLabel: string;
   totalNotes: number;
   updatedAtLabel: string | null;
   monitoringEnded: boolean;
+  /** 収集終了メッセージに使う日付ラベル（例:「2026年8月31日」）。monitoringEnded=false のときは無視される。 */
+  monitoringEndedLabel: string | null;
 };
 
-export function Header({ periodLabel, totalNotes, updatedAtLabel, monitoringEnded }: HeaderProps) {
+export function Header({
+  periodLabel,
+  totalNotes,
+  updatedAtLabel,
+  monitoringEnded,
+  monitoringEndedLabel,
+}: HeaderProps) {
   return (
     <header className="flex flex-col gap-2">
       <div className="eyebrow flex items-center gap-2 text-accent">
@@ -23,16 +32,12 @@ export function Header({ periodLabel, totalNotes, updatedAtLabel, monitoringEnde
             monitoringEnded ? "bg-label" : "bg-accent pulse-dot"
           }`}
         />
-        <span className={monitoringEnded ? "text-label" : "text-accent"}>
-          BirdXplorer コミュニティノート観測
-        </span>
+        <span className={monitoringEnded ? "text-label" : "text-accent"}>{EVENT.eyebrowLabel}</span>
       </div>
       <h1 className="text-[24px] font-bold tracking-tight text-heading sm:text-[30px]">
-        コミュニティノートタイムライン 令和8年熊本地震
+        {EVENT.siteTitle}
       </h1>
-      <p className="tabular text-[12px] text-muted sm:text-[13px]">
-        2026年7月28日 16:27 発生（M7.1）
-      </p>
+      <p className="tabular text-[12px] text-muted sm:text-[13px]">{EVENT.occurredAtLabel}</p>
       <p className="text-[12px] text-muted sm:text-[13px]">
         対象期間 {periodLabel} ・ 集計 {formatCount(totalNotes)}件
         {updatedAtLabel ? ` ・ 最終更新 ${updatedAtLabel}` : ""}
@@ -46,8 +51,8 @@ export function Header({ periodLabel, totalNotes, updatedAtLabel, monitoringEnde
         コミュニティノートはXの利用者が投稿し、Xの評価を経て表示されるものです。ノートが付いていることは、
         元の投稿が誤りであることを意味しません。
       </p>
-      {monitoringEnded && (
-        <p className="tabular text-[12px] text-label">2026年8月31日で収集を終了しました</p>
+      {monitoringEnded && monitoringEndedLabel && (
+        <p className="tabular text-[12px] text-label">{monitoringEndedLabel}で収集を終了しました</p>
       )}
     </header>
   );

@@ -1,4 +1,5 @@
-import { BIN_MINUTES, MAINSHOCK_AT } from "./constants";
+import { BIN_MINUTES } from "./constants";
+import { EVENT } from "./event";
 import { binStart, nextBin } from "./time";
 import type {
   Cluster,
@@ -355,11 +356,12 @@ function mockCrossPosts(generatedAt: number): CrossPostsFile {
  */
 export function generateMock(): MockData {
   const rand = mulberry32(20260728);
-  const generatedAt = MAINSHOCK_AT + 30 * 60 * 60 * 1000;
+  const generatedAt = EVENT.occurredAt + 30 * 60 * 60 * 1000;
 
-  // BLOB_READ_WRITE_TOKEN 等が無い環境でも動くよう、開始時刻はモック専用に固定値を使う。
-  // env() は他の必須変数(KV等)まで要求するため、ここでは参照しない。
-  const monitorStartAt = binStart(Date.parse("2026-07-28T13:00:00+09:00"));
+  // BLOB_READ_WRITE_TOKEN 等が無い環境でも動くよう、開始時刻は env() を参照せずモック専用に
+  // 算出する（env() は他の必須変数(KV等)まで要求するため）。EVENT.occurredAt より数時間前から
+  // 収集していた状態を再現できればよいので、発生時刻からの相対値で決める。
+  const monitorStartAt = binStart(EVENT.occurredAt - 3.45 * 60 * 60 * 1000);
   const endAt = binStart(generatedAt);
 
   // ── クラスタ ──
@@ -390,7 +392,7 @@ export function generateMock(): MockData {
   const notes: Note[] = [];
   let noteSeq = 1;
   for (let binAt = monitorStartAt; binAt <= endAt; binAt = nextBin(binAt)) {
-    const minutesSince = (binAt - MAINSHOCK_AT) / 60000;
+    const minutesSince = (binAt - EVENT.occurredAt) / 60000;
     const intensity = intensityAt(minutesSince);
     const count = Math.max(0, Math.round(intensity * 6 + (rand() - 0.5) * 2));
 

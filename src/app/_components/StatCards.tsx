@@ -1,11 +1,11 @@
-import { MAINSHOCK_AT, MAINSHOCK_MAGNITUDE } from "@/lib/constants";
+import { EVENT } from "@/lib/event";
 import { hhmm } from "@/lib/time";
 import { formatCount, type StatCards as StatCardsData } from "@/lib/view";
 
 /**
  * 統計カード(design.md §6.2)。カード3・4(最大クラスタ・ピーク帯)は呼び出し側で
  * 実データから算出済みの値を受け取るだけで、ここではハードコードしない。
- * カード2(本震)だけは spec.md 上固定の事実(M7.1 / 16:27)なので定数から組み立てる。
+ * カード2(本震)だけは spec.md 上固定の事実(M7.1 / 16:27)なので event.ts から組み立てる。
  *
  * 件数は formatCount で整形する。toLocaleString は環境によって表記が変わり
  * ハイドレーション不一致を招くため使わない(view.ts のコメント参照)。
@@ -26,8 +26,8 @@ export function StatCards({ stats, binMinutes }: { stats: StatCardsData; binMinu
         }
       />
       <StatCard
-        label="本震"
-        value={`${MAINSHOCK_MAGNITUDE} / ${hhmm(MAINSHOCK_AT)}`}
+        label={EVENT.keyMomentLabel}
+        value={`${EVENT.keyMomentMagnitude} / ${hhmm(EVENT.occurredAt)}`}
         valueClassName="text-accent"
       />
       <StatCard

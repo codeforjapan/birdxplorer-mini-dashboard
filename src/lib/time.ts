@@ -66,6 +66,12 @@ export function jstDateStart(isoDay: string): number {
   return Date.parse(`${isoDay}T00:00:00+09:00`);
 }
 
+/** "YYYY-MM-DD" を "2026年8月31日" 形式に変換する。収集終了メッセージ等の表示に使う。 */
+export function jstDateLabel(isoDay: string): string {
+  const [year, month, day] = isoDay.split("-").map(Number);
+  return `${year}年${month}月${day}日`;
+}
+
 /** 日次ダイジェストの対象範囲: 前日15:00 JST 〜 当日15:00 JST。 */
 export function digestWindow(reportAt: number): { from: number; to: number } {
   const { year, month, day } = jstParts(reportAt);

@@ -1,11 +1,8 @@
 /**
- * 単一イベントモニタとしての固定値。
- * 仕様書・デザイン仕様書で確定した値をここに集約する。
+ * 表示・集計に関わる固定値。
+ * イベント固有の値（発生時刻・検索語・文言等）は src/lib/event.ts に集約しており、
+ * ここに置くのは特定のイベントに依存しない値のみ。
  */
-
-/** 本震: 2026-07-28 16:27 JST (M7.1) */
-export const MAINSHOCK_AT = Date.parse("2026-07-28T16:27:00+09:00");
-export const MAINSHOCK_MAGNITUDE = "M7.1";
 
 /** タイムラインのビン幅（分）。Blob の timeline.json と UI で共有する。 */
 export const BIN_MINUTES = 30;
