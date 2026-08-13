@@ -284,6 +284,64 @@ function mockCrossPosts(generatedAt: number): CrossPostsFile {
       claimSummary: "避難所が満員で入れないという未確認の投稿。市の発表では空きがある。",
       publishedAt: h(13), likes: 12,
     },
+    // ── スパークライン/最多種別/件数差を出すための追加ダミー ──
+    // TikTok を厚めに（拡散の主戦場）。時間を散らして投稿量の推移を作る。
+    {
+      insightId: "mock_tt_4", platform: "tiktok", url: "https://www.tiktok.com/@x/video/700000000000000004",
+      stance: "SPREADING", urgency: "HIGH", claimType: "RUMOR",
+      officialRelationship: "conflicts_with_official", officialUrl: "https://www.pref.kumamoto.jp/",
+      claimSummary: "井戸水に毒が混ざっているので飲むなとする投稿。県はそうした事実はないと否定している。",
+      publishedAt: h(1), views: 3410000, likes: 121000, comments: 8300, shares: 9100, collects: 4200, flameRate: 0.0024,
+    },
+    {
+      insightId: "mock_tt_5", platform: "tiktok", url: "https://www.tiktok.com/@x/video/700000000000000005",
+      stance: "SPREADING", urgency: "MEDIUM", claimType: "RUMOR",
+      officialRelationship: "no_official_source", officialUrl: null,
+      claimSummary: "コンビニで略奪が起きているとする映像。別地域の過去映像の流用とみられる。",
+      publishedAt: h(2), views: 884000, likes: 61000, comments: 2100, shares: 3300, collects: 900, flameRate: 0.0024,
+    },
+    {
+      insightId: "mock_tt_6", platform: "tiktok", url: "https://www.tiktok.com/@x/video/700000000000000006",
+      stance: "REPORTING", urgency: "LOW", claimType: "DAMAGE_REPORT",
+      officialRelationship: "insufficient_official_evidence", officialUrl: "https://www.mlit.go.jp/",
+      claimSummary: "避難所の混雑状況を伝える現地の投稿。",
+      publishedAt: h(5), views: 223000, likes: 5400, comments: 210, shares: 120, collects: 88, flameRate: 0.0009,
+    },
+    {
+      insightId: "mock_yt_4", platform: "youtube", url: "https://www.youtube.com/watch?v=MOCK0000004",
+      stance: "SPREADING", urgency: "HIGH", claimType: "FALSE_DAMAGE",
+      officialRelationship: "conflicts_with_official", officialUrl: "https://www.mlit.go.jp/",
+      claimSummary: "ダムが決壊寸前だとするうわさを煽る動画。管理者は異常なしと発表している。",
+      publishedAt: h(3), views: 301000, likes: 8800, comments: 640, flameRate: 0.0021,
+    },
+    {
+      insightId: "mock_yt_5", platform: "youtube", url: "https://www.youtube.com/watch?v=MOCK0000005",
+      stance: "DEBUNKING", urgency: "NONE", claimType: "DEBUNK",
+      officialRelationship: "no_official_source", officialUrl: null,
+      claimSummary: "ライオン脱走はデマだと映像の出所を検証する解説動画。",
+      publishedAt: h(4), views: 81000, likes: 3300, comments: 120, flameRate: 0.0015,
+    },
+    {
+      insightId: "mock_th_4", platform: "threads", url: "https://www.threads.com/@h/post/ABCDEFG0002",
+      stance: "DEBUNKING", urgency: "LOW", claimType: "IMPERSONATION",
+      officialRelationship: "insufficient_official_evidence", officialUrl: "https://www.city.kumamoto.jp/",
+      claimSummary: "自治体になりすました募金アカウントへの注意喚起。",
+      publishedAt: h(6), likes: 340,
+    },
+    {
+      insightId: "mock_th_5", platform: "threads", url: "https://www.threads.com/@h/post/ABCDEFG0003",
+      stance: "REPORTING", urgency: "NONE", claimType: "DAMAGE_REPORT",
+      officialRelationship: "no_official_source", officialUrl: null,
+      claimSummary: "断水エリアの給水所情報のまとめ。",
+      publishedAt: h(9), likes: 120,
+    },
+    {
+      insightId: "mock_web_4", platform: "web", url: "https://example.com/news/mock-article-4",
+      stance: "DEBUNKING", urgency: "NONE", claimType: "FALSE_RESCUE",
+      officialRelationship: "insufficient_official_evidence", officialUrl: "https://www.pref.kumamoto.jp/",
+      claimSummary: "県が救助要請の偽情報に注意を呼びかけたと伝えるファクトチェック記事。",
+      publishedAt: h(10),
+    },
   ];
   return { generatedAt, posts };
 }
