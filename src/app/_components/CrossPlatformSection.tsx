@@ -180,22 +180,26 @@ function PfCard({
   return (
     <button
       type="button"
-      id={`crossplatform-tab-${s.platform}`}
-      role="tab"
-      aria-selected={selected}
-      aria-controls="crossplatform-feed"
+      aria-pressed={selected}
       onClick={onSelect}
-      className={`rounded-xl border border-line bg-card p-3 text-left transition hover:border-muted ${
-        selected ? "ring-2 ring-heading" : ""
+      className={`rounded-xl border p-3 text-left transition ${
+        selected ? "border-heading bg-block" : "border-line bg-card hover:border-muted"
       }`}
     >
       <div className="flex items-baseline gap-2">
         <span className="flex items-center gap-1.5 text-[13px] font-semibold text-heading">
-          {PLATFORM_ICON[s.platform]}
+          {/* アイコンはミュートグレー（ブランド色の赤は本震の赤と衝突するため単色のまま軽く見せる）。 */}
+          <span className="flex text-muted">{PLATFORM_ICON[s.platform]}</span>
           {PLATFORM_LABEL[s.platform]}
         </span>
         <span className="tabular text-[18px] font-bold text-heading">{s.count}</span>
         <span className="text-[10px] text-muted">件</span>
+        {/* 選択中は「押されている」ことを塗り＋チップで明示（赤は本震専用のため使わない）。 */}
+        {selected && (
+          <span className="rounded-full border border-line bg-card px-2 py-0.5 text-[9px] font-semibold text-heading">
+            絞り込み中
+          </span>
+        )}
         {s.latestAt !== null && (
           <span className="tabular ml-auto text-[10px] text-label">最新 {mmddhhmm(s.latestAt)}</span>
         )}
@@ -266,7 +270,7 @@ function PfGroup({ label, count, posts }: { label: React.ReactNode; count: numbe
 function pfHeadLabel(platform: CrossPlatform): React.ReactNode {
   return (
     <span className="flex items-center gap-1.5">
-      {PLATFORM_ICON[platform]}
+      <span className="flex text-muted">{PLATFORM_ICON[platform]}</span>
       {PLATFORM_LABEL[platform]}
     </span>
   );
@@ -310,8 +314,9 @@ export function CrossPlatformSection({ posts }: { posts: CrossPost[] }) {
         YouTube・TikTok・Threads・Web で観測された投稿の AI 分析（コミュニティノート非対象）。
       </p>
 
-      {/* 上段A: PFサマリーカード（＝絞り込みタブ）2×2 */}
-      <div role="tablist" aria-label="プラットフォーム" className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+      {/* 上段A: PFサマリーカード。実態は「押すと絞り込み・もう一度で解除」のトグルなので、
+          role=tab ではなく aria-pressed のトグルボタン群（role=group）にする。 */}
+      <div role="group" aria-label="プラットフォームで絞り込み" className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
         {summary.map((s) => (
           <PfCard key={s.platform} s={s} selected={selected === s.platform} onSelect={() => pick(s.platform)} />
         ))}
@@ -334,12 +339,8 @@ export function CrossPlatformSection({ posts }: { posts: CrossPost[] }) {
         )}
       </div>
 
-      {/* 下段B: PFごとの投稿一覧（上段のカード＝タブに対応する tabpanel） */}
-      <div
-        id="crossplatform-feed"
-        role="tabpanel"
-        aria-labelledby={selected ? `crossplatform-tab-${selected}` : undefined}
-      >
+      {/* 下段B: PFごとの投稿一覧。絞り込みの変化を支援技術に伝えるため live region にする。 */}
+      <div aria-live="polite">
         {selected ? (
           <>
             <PfGroup label={pfHeadLabel(selected)} count={selectedPosts.length} posts={selectedPosts.slice(0, visible)} />
