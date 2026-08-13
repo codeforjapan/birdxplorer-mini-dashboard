@@ -13,6 +13,7 @@ export const PATH = {
   notes: "data/notes.json",
   timeline: "data/timeline.json",
   clusters: "data/clusters.json",
+  crossPosts: "data/cross-posts.json",
   dailyReport: (isoDay: string) => `reports/daily/${isoDay}.md`,
   cumulativeReport: "reports/cumulative.md",
 } as const;

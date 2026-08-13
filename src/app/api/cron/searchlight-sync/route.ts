@@ -1,6 +1,6 @@
 import { runCronJob } from "@/lib/cron";
-import { getInsights } from "@/lib/searchlight";
-import { upsertSearchlightInsights } from "@/lib/store";
+import { getCrossInsights, getInsights } from "@/lib/searchlight";
+import { upsertCrossPosts, upsertSearchlightInsights } from "@/lib/store";
 import { ensureMigrated } from "../_lib/migrate-once";
 
 // migrate() が node:fs を使うため（他 cron と同じ理由で）明示する。
@@ -17,7 +17,9 @@ export async function GET(req: Request): Promise<Response> {
     await ensureMigrated();
     const rows = await getInsights();
     await upsertSearchlightInsights(rows);
-    return { upserted: rows.length };
+    const crossRows = await getCrossInsights();
+    await upsertCrossPosts(crossRows);
+    return { upserted: rows.length, crossUpserted: crossRows.length };
   });
 }
 

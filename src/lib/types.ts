@@ -122,4 +122,45 @@ export type JobRun = {
   error: string | null;
 };
 
+export type CrossPlatform = "youtube" | "tiktok" | "threads" | "web";
+
+/** 非X の Searchlight 分析結果（独立セクション用・公開 Blob に載る）。 */
+export type CrossPost = {
+  insightId: string;
+  platform: CrossPlatform;
+  url: string;
+  stance: "SPREADING" | "DEBUNKING" | "REPORTING" | "NEUTRAL" | null;
+  urgency: "NONE" | "LOW" | "MEDIUM" | "HIGH";
+  claimType: string;
+  officialRelationship: string;
+  officialUrl: string | null;
+  claimSummary: string;
+  /** epoch ms。元投稿の公開時刻。無ければ null。 */
+  publishedAt: number | null;
+  // ── エンゲージメント指標 ──
+  // 数値集計のみで個人特定情報ではない（著者・本文は依然として保存しない）。
+  // youtube/tiktok を中心に取得でき、無いPF（web は全欠落・threads は likes のみ）では null。
+  /** 表示/再生数。youtube/tiktok のみ。 */
+  views?: number | null;
+  /** いいね数。youtube/tiktok/threads。 */
+  likes?: number | null;
+  /** コメント数。youtube/tiktok のみ。 */
+  comments?: number | null;
+  /** シェア数。tiktok のみ。 */
+  shares?: number | null;
+  /** 保存数。tiktok のみ。 */
+  collects?: number | null;
+  /**
+   * 炎上レート（Searchlight 算出の生値・0〜1）。youtube/tiktok のみ。
+   * 式が PF で異なる（youtube=comments/views, tiktok=comments/likes）ため、
+   * PF 横断のソート/比較には使わない（表示のみ）。
+   */
+  flameRate?: number | null;
+};
+
+export type CrossPostsFile = {
+  generatedAt: number;
+  posts: CrossPost[];
+};
+
 export type JobName = "ingest" | "recluster" | "refresh-status" | "report" | "reclassify" | "searchlight-sync";
