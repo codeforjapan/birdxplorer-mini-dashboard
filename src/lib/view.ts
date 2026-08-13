@@ -1,8 +1,9 @@
 import { activeClusters, clusterLookup, resolveClusterId } from "./clusters";
+import { claimTypeLabel } from "./claimType";
 import { clusterColor, MAX_DISTINCT_CLUSTERS, OTHER_CLUSTER_COLOR, OTHER_CLUSTER_ID } from "./constants";
 import { isMonitoringEnded } from "./env";
 import { nextBin } from "./time";
-import type { Cluster, Note, SearchlightBadge, TimelineBin, TimelineFile } from "./types";
+import type { Cluster, CrossPlatform, CrossPost, Note, SearchlightBadge, TimelineBin, TimelineFile } from "./types";
 
 /**
  * 現在時刻の取得を1箇所に集約する。
@@ -359,4 +360,99 @@ export function statusLabel(status: Note["currentStatus"]): string {
     case null:
       return "未評価";
   }
+}
+
+// ── 非X（クロスプラットフォーム）PF別サマリー ──
+// UI（CrossPlatformSection）から集計を切り離した純関数。カード＝俯瞰の材料をPF単位で返す。
+// 集計は全件（crossPostsFile.posts）を対象にする。表示上の件数制限は集計に影響させない。
+
+/** カード＝タブの並び順（固定）。件数0のPFは buildCrossPlatformSummary が除外する。 */
+export const CROSS_PF_ORDER: readonly CrossPlatform[] = ["youtube", "tiktok", "threads", "web"];
+
+export type CrossStanceCounts = { spreading: number; debunking: number; reporting: number; neutral: number };
+/** 規模はPFで指標が違うため代表を1つ選ぶ: views→likes→なし。 */
+export type CrossScale = { kind: "views" | "likes" | "none"; max: number | null };
+
+export type PfSummary = {
+  platform: CrossPlatform;
+  count: number;
+  stance: CrossStanceCounts;
+  highUrgency: number;
+  officialConflict: number;
+  scale: CrossScale;
+  latestAt: number | null;
+  spark: number[];
+  topClaim: { label: string; count: number } | null;
+};
+
+/** null/NEUTRAL は「中立」に寄せる。 */
+function tallyStance(posts: readonly CrossPost[]): CrossStanceCounts {
+  const c: CrossStanceCounts = { spreading: 0, debunking: 0, reporting: 0, neutral: 0 };
+  for (const p of posts) {
+    if (p.stance === "SPREADING") c.spreading += 1;
+    else if (p.stance === "DEBUNKING") c.debunking += 1;
+    else if (p.stance === "REPORTING") c.reporting += 1;
+    else c.neutral += 1; // NEUTRAL または null
+  }
+  return c;
+}
+
+/** 代表指標: views を持つ投稿があれば最大 views、無ければ likes、どちらも無ければ none。 */
+function pickScale(posts: readonly CrossPost[]): CrossScale {
+  const views = posts.map((p) => p.views).filter((v): v is number => typeof v === "number");
+  if (views.length > 0) return { kind: "views", max: Math.max(...views) };
+  const likes = posts.map((p) => p.likes).filter((v): v is number => typeof v === "number");
+  if (likes.length > 0) return { kind: "likes", max: Math.max(...likes) };
+  return { kind: "none", max: null };
+}
+
+/** 最頻 claim_type を日本語ラベル化。同数首位は件数降順→トークン昇順で安定させる。 */
+function topClaim(posts: readonly CrossPost[]): { label: string; count: number } | null {
+  if (posts.length === 0) return null;
+  const counts = new Map<string, number>();
+  for (const p of posts) counts.set(p.claimType, (counts.get(p.claimType) ?? 0) + 1);
+  const top = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
+  return { label: claimTypeLabel(top[0]), count: top[1] };
+}
+
+/**
+ * 全PF共通の時間軸で投稿量ビンを作る。publishedAt を持つ投稿のみ対象。
+ * axisMin/axisMax はセクション全体（全PF）の範囲。件数が2未満、または軸幅0のPFは [] を返す（描かない）。
+ */
+function sparkBins(posts: readonly CrossPost[], axisMin: number, axisMax: number, binCount: number): number[] {
+  const dated = posts.map((p) => p.publishedAt).filter((v): v is number => typeof v === "number");
+  if (dated.length < 2 || axisMax <= axisMin) return [];
+  const bins = new Array<number>(binCount).fill(0);
+  const span = axisMax - axisMin;
+  for (const t of dated) {
+    const idx = Math.min(binCount - 1, Math.floor(((t - axisMin) / span) * binCount));
+    bins[idx] += 1;
+  }
+  return bins;
+}
+
+/** PF別サマリーを CROSS_PF_ORDER 順に返す（件数0のPFは含めない）。 */
+export function buildCrossPlatformSummary(posts: readonly CrossPost[], binCount = 16): PfSummary[] {
+  const dates = posts.map((p) => p.publishedAt).filter((v): v is number => typeof v === "number");
+  const axisMin = dates.length > 0 ? Math.min(...dates) : 0;
+  const axisMax = dates.length > 0 ? Math.max(...dates) : 0;
+
+  const out: PfSummary[] = [];
+  for (const platform of CROSS_PF_ORDER) {
+    const group = posts.filter((p) => p.platform === platform);
+    if (group.length === 0) continue;
+    const groupDates = group.map((p) => p.publishedAt).filter((v): v is number => typeof v === "number");
+    out.push({
+      platform,
+      count: group.length,
+      stance: tallyStance(group),
+      highUrgency: group.filter((p) => p.urgency === "HIGH").length,
+      officialConflict: group.filter((p) => /conflict/i.test(p.officialRelationship)).length,
+      scale: pickScale(group),
+      latestAt: groupDates.length > 0 ? Math.max(...groupDates) : null,
+      spark: sparkBins(group, axisMin, axisMax, binCount),
+      topClaim: topClaim(group),
+    });
+  }
+  return out;
 }
