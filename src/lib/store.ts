@@ -73,6 +73,12 @@ type CrossPostRowDb = {
   official_source_url: string | null;
   claim_summary: string;
   published_at: string | number | null;
+  views: string | number | null;
+  likes: string | number | null;
+  comments: string | number | null;
+  shares: string | number | null;
+  collects: string | number | null;
+  flame_rate: string | number | null;
 };
 
 function mapNoteRow(row: NoteRow): Note {
@@ -125,6 +131,12 @@ function mapCrossRow(row: CrossPostRowDb): CrossPost {
     officialUrl: row.official_source_url,
     claimSummary: row.claim_summary,
     publishedAt: nullableBigintToNumber(row.published_at),
+    views: nullableBigintToNumber(row.views),
+    likes: nullableBigintToNumber(row.likes),
+    comments: nullableBigintToNumber(row.comments),
+    shares: nullableBigintToNumber(row.shares),
+    collects: nullableBigintToNumber(row.collects),
+    flameRate: nullableBigintToNumber(row.flame_rate),
   };
 }
 
@@ -359,8 +371,9 @@ export async function upsertCrossPosts(rows: readonly CrossPostRow[]): Promise<v
       txn.query(
         `insert into searchlight_cross_posts
            (insight_id, platform, url, stance, urgency, claim_type,
-            official_source_relationship, official_source_url, claim_summary, published_at, synced_at)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+            official_source_relationship, official_source_url, claim_summary, published_at, synced_at,
+            views, likes, comments, shares, collects, flame_rate)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
          on conflict (insight_id) do update set
            platform = excluded.platform,
            url = excluded.url,
@@ -371,7 +384,13 @@ export async function upsertCrossPosts(rows: readonly CrossPostRow[]): Promise<v
            official_source_url = excluded.official_source_url,
            claim_summary = excluded.claim_summary,
            published_at = excluded.published_at,
-           synced_at = excluded.synced_at`,
+           synced_at = excluded.synced_at,
+           views = excluded.views,
+           likes = excluded.likes,
+           comments = excluded.comments,
+           shares = excluded.shares,
+           collects = excluded.collects,
+           flame_rate = excluded.flame_rate`,
         [
           r.insight_id,
           r.platform,
@@ -384,6 +403,12 @@ export async function upsertCrossPosts(rows: readonly CrossPostRow[]): Promise<v
           r.claim_summary,
           r.published_at,
           r.synced_at,
+          r.views,
+          r.likes,
+          r.comments,
+          r.shares,
+          r.collects,
+          r.flame_rate,
         ],
       ),
     ),

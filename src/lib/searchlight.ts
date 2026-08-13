@@ -96,7 +96,21 @@ export type CrossPostRow = {
   claim_summary: string;
   published_at: number | null;
   synced_at: number;
+  // ── エンゲージメント指標（raw.metrics 由来。数値集計のみ・個人特定情報ではない）──
+  // 取得できるフィールドは PF で偏る（web は全欠落・threads は likes のみ・shares/collects は tiktok のみ）。
+  views: number | null;
+  likes: number | null;
+  comments: number | null;
+  shares: number | null;
+  collects: number | null;
+  /** 炎上レート（Searchlight 算出の生値 0〜1・youtube/tiktok のみ）。式が PF で異なり横断比較しない。 */
+  flame_rate: number | null;
 };
+
+/** raw.metrics の数値を取り出す。数値以外（欠落・null・文字列）は null に倒す。 */
+function metricNumber(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
 
 function toEpochMs(v: unknown): number | null {
   if (typeof v !== "string") return null;
@@ -127,6 +141,9 @@ export function toCrossRow(raw: unknown, now: number): CrossPostRow | null {
   const claimSummary = typeof payload.claim_summary === "string" ? payload.claim_summary.trim() : "";
   if (!urgency || !claimType || !rel || !claimSummary) return null;
 
+  // 指標は payload ではなく item 直下の metrics に入る。無いPF・欠落は null。
+  const metrics = isRecord(raw.metrics) ? raw.metrics : {};
+
   return {
     insight_id: id,
     platform: platform as CrossPostRow["platform"],
@@ -139,6 +156,12 @@ export function toCrossRow(raw: unknown, now: number): CrossPostRow | null {
     claim_summary: claimSummary,
     published_at: toEpochMs(raw.published_at) ?? toEpochMs(raw.analyzed_at),
     synced_at: now,
+    views: metricNumber(metrics.views),
+    likes: metricNumber(metrics.likes),
+    comments: metricNumber(metrics.comments),
+    shares: metricNumber(metrics.shares),
+    collects: metricNumber(metrics.collects),
+    flame_rate: metricNumber(metrics.flame_rate),
   };
 }
 
