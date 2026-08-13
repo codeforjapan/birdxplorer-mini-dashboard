@@ -1,13 +1,16 @@
+"use client";
+
+import { useMemo, useState } from "react";
 import { mmddhhmm } from "@/lib/time";
 import type { CrossPost, CrossPlatform } from "@/lib/types";
+import { CROSS_PF_ORDER, buildCrossPlatformSummary, type PfSummary } from "@/lib/view";
+import { Sparkline } from "./Sparkline";
 
 /**
- * 非X（YouTube/TikTok/Threads/Web）の Searchlight 分析を独立セクションで一覧表示する。
- * コミュニティノートに紐づかないため per-note バッジには載せられない投稿を、ここで見せる。
- *
- * 見せ方は「観測装置のフィード」（design.md §1）: PF別に畳まず1件ずつフラットに並べ、
- * AI要約(claim_summary)を主役にする。表示は列挙値・要約・URL・数値指標のみ（本文・著者は非保存・非表示）。
- * 配色はバッジ規約（中立背景＋色ドット・赤は本震専用のため使わない。design.md §2.3/§3）に準拠。
+ * 非X（YouTube/TikTok/Threads/Web）の Searchlight 分析を「PFサマリーカード（＝絞り込みタブ）＋
+ * PFごとの投稿一覧」の2段構えで見せる（design 2026-08-13）。カードで俯瞰し、押すとそのPFの実物を下に絞り込む。
+ * 表示は列挙値・要約・URL・数値指標のみ（本文・著者は非保存・非表示）。
+ * 配色はバッジ規約準拠（中立背景＋色ドット・赤は本震専用のため使わない）。
  */
 const PLATFORM_LABEL: Record<CrossPlatform, string> = {
   youtube: "YouTube",
@@ -48,8 +51,16 @@ const STANCE_LABEL: Record<NonNullable<CrossPost["stance"]>, { text: string; dot
   NEUTRAL: null,
 };
 
-/** 実運用は非X合計が数百件規模になるため、シグナル上位のみ見せる。全件ブラウズは対象外（要約主体の気付き用）。 */
-const MAX_VISIBLE = 60;
+// 立場の内訳バー用（順序＝拡散源→打消し→報道→中立）。色は STANCE_LABEL と揃える。
+const STANCE_BAR: { key: keyof PfSummary["stance"]; text: string; color: string }[] = [
+  { key: "spreading", text: "拡散源", color: "var(--color-cluster-7)" },
+  { key: "debunking", text: "打消し", color: "var(--color-cluster-3)" },
+  { key: "reporting", text: "報道", color: "var(--color-cluster-0)" },
+  { key: "neutral", text: "中立", color: "var(--color-cluster-other)" },
+];
+
+const ALL_LIMIT = 3; // すべて表示時に各PFで見せる件数
+const FILTER_STEP = 30; // 絞り込み時の初期件数＝もっと見るの1回分
 
 /** 大きな数は 1.2万 のように畳む（等幅で桁を揃える）。 */
 function fmtCount(n: number): string {
@@ -123,12 +134,169 @@ function Metrics({ p }: { p: CrossPost }) {
   );
 }
 
+/** 1投稿の行。 */
+function PostRow({ p }: { p: CrossPost }) {
+  return (
+    <li className="flex flex-col gap-1.5 border-b border-line py-3 last:border-b-0">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Badges p={p} />
+      </div>
+      <p className="text-[13px] leading-[1.7] text-body">{p.claimSummary}</p>
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <Metrics p={p} />
+        <span className="flex shrink-0 items-center gap-2">
+          {p.publishedAt !== null && <span className="tabular text-[10px] text-label">{mmddhhmm(p.publishedAt)}</span>}
+          <a
+            href={p.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0 text-[11px] text-label underline hover:text-body"
+          >
+            元投稿を開く
+          </a>
+        </span>
+      </div>
+    </li>
+  );
+}
+
+/** 規模（最大表示/最大いいね/指標なし）を短い文言に整形する。 */
+function scaleText(s: PfSummary["scale"]): string {
+  if (s.kind === "views" && s.max !== null) return `最大表示 ${fmtCount(s.max)}`;
+  if (s.kind === "likes" && s.max !== null) return `最大 いいね${fmtCount(s.max)}`;
+  return "指標なし";
+}
+
+/** PFサマリーカード（＝絞り込みタブ）。 */
+function PfCard({
+  s,
+  selected,
+  onSelect,
+}: {
+  s: PfSummary;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={selected}
+      onClick={onSelect}
+      className={`rounded-xl border border-line bg-card p-3 text-left transition hover:border-muted ${
+        selected ? "ring-2 ring-heading" : ""
+      }`}
+    >
+      <div className="flex items-baseline gap-2">
+        <span className="flex items-center gap-1.5 text-[13px] font-semibold text-heading">
+          {PLATFORM_ICON[s.platform]}
+          {PLATFORM_LABEL[s.platform]}
+        </span>
+        <span className="tabular text-[18px] font-bold text-heading">{s.count}</span>
+        <span className="text-[10px] text-muted">件</span>
+        {s.latestAt !== null && (
+          <span className="tabular ml-auto text-[10px] text-label">最新 {mmddhhmm(s.latestAt)}</span>
+        )}
+      </div>
+
+      <div className="mt-2">
+        <div className="mb-1 text-[10px] text-label">投稿量の推移</div>
+        <Sparkline values={s.spark} className="block h-[30px] w-full" />
+      </div>
+
+      <div className="mt-2">
+        <div className="flex h-2 overflow-hidden rounded bg-block">
+          {STANCE_BAR.map((seg) =>
+            s.stance[seg.key] > 0 ? (
+              <span
+                key={seg.key}
+                style={{ width: `${(s.stance[seg.key] / s.count) * 100}%`, backgroundColor: seg.color }}
+              />
+            ) : null,
+          )}
+        </div>
+        <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-weak">
+          {STANCE_BAR.map((seg) =>
+            s.stance[seg.key] > 0 ? (
+              <span key={seg.key}>
+                <span aria-hidden className="mr-1 inline-block size-1.5 rounded-sm align-middle" style={{ backgroundColor: seg.color }} />
+                {seg.text}
+                {s.stance[seg.key]}
+              </span>
+            ) : null,
+          )}
+        </div>
+      </div>
+
+      <div className="mt-2 text-[11px] text-weak">
+        緊急度高 <b className="font-bold text-heading">{s.highUrgency}</b> ・ 公式と相違{" "}
+        <b className="font-bold text-heading">{s.officialConflict}</b> ・ {scaleText(s.scale)}
+      </div>
+
+      {s.topClaim && (
+        <div className="mt-1 text-[10px] text-muted">
+          最多の種別：<span className="text-weak">{s.topClaim.label}</span>（{s.topClaim.count}件）
+        </div>
+      )}
+    </button>
+  );
+}
+
+/** PFごとの見出し付きグループ（下段の一覧）。 */
+function PfGroup({ label, count, posts }: { label: React.ReactNode; count: number; posts: CrossPost[] }) {
+  const hidden = count - posts.length;
+  return (
+    <div className="mt-4 first:mt-0">
+      <div className="flex items-center gap-2 border-b-2 border-line pb-1.5 text-[13px] font-semibold text-heading">
+        {label}
+        <span className="ml-auto text-[11px] font-normal text-label">{count}件</span>
+      </div>
+      <ul className="flex flex-col">
+        {posts.map((p) => (
+          <PostRow key={p.insightId} p={p} />
+        ))}
+      </ul>
+      {hidden > 0 && <p className="mt-2 text-[10px] text-label">…ほか {hidden} 件</p>}
+    </div>
+  );
+}
+
+function pfHeadLabel(platform: CrossPlatform): React.ReactNode {
+  return (
+    <span className="flex items-center gap-1.5">
+      {PLATFORM_ICON[platform]}
+      {PLATFORM_LABEL[platform]}
+    </span>
+  );
+}
+
 export function CrossPlatformSection({ posts }: { posts: CrossPost[] }) {
+  const [selected, setSelected] = useState<CrossPlatform | null>(null);
+  const [visible, setVisible] = useState(FILTER_STEP);
+
+  const summary = useMemo(() => buildCrossPlatformSummary(posts), [posts]);
+  const byPlatform = useMemo(() => {
+    const map = new Map<CrossPlatform, CrossPost[]>();
+    for (const p of posts) {
+      const arr = map.get(p.platform);
+      if (arr) arr.push(p);
+      else map.set(p.platform, [p]);
+    }
+    return map;
+  }, [posts]);
+
   if (posts.length === 0) return null;
-  // posts は publishSnapshot 側で「拡散源→打消し→報道、その後 published_at 降順」に整列済み。
-  // 炎上レートは PF で式が違い横断比較できないため、ここでの並べ替えには使わない。
-  const visible = posts.slice(0, MAX_VISIBLE);
-  const hidden = posts.length - visible.length;
+
+  const pick = (platform: CrossPlatform) => {
+    setSelected((cur) => (cur === platform ? null : platform));
+    setVisible(FILTER_STEP);
+  };
+  const reset = () => {
+    setSelected(null);
+    setVisible(FILTER_STEP);
+  };
+
+  const selectedPosts = selected ? byPlatform.get(selected) ?? [] : [];
 
   return (
     <section className="rounded-xl border border-line bg-card p-4 sm:p-5">
@@ -139,37 +307,51 @@ export function CrossPlatformSection({ posts }: { posts: CrossPost[] }) {
       <p className="mt-1 text-[11px] text-label">
         YouTube・TikTok・Threads・Web で観測された投稿の AI 分析（コミュニティノート非対象）。
       </p>
-      <ul className="mt-3 flex flex-col">
-        {visible.map((p) => (
-          <li key={p.insightId} className="flex flex-col gap-1.5 border-b border-line py-3 first:pt-1 last:border-b-0">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="flex shrink-0 items-center gap-1 text-[11px] text-label">
-                {PLATFORM_ICON[p.platform]}
-                {PLATFORM_LABEL[p.platform]}
-              </span>
-              <Badges p={p} />
-            </div>
-            <p className="text-[13px] leading-[1.7] text-body">{p.claimSummary}</p>
-            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-              <Metrics p={p} />
-              <span className="flex shrink-0 items-center gap-2">
-                {p.publishedAt !== null && (
-                  <span className="tabular text-[10px] text-label">{mmddhhmm(p.publishedAt)}</span>
-                )}
-                <a
-                  href={p.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="shrink-0 text-[11px] text-label underline hover:text-body"
-                >
-                  元投稿を開く
-                </a>
-              </span>
-            </div>
-          </li>
+
+      {/* 上段A: PFサマリーカード（＝絞り込みタブ）2×2 */}
+      <div role="tablist" aria-label="プラットフォーム" className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {summary.map((s) => (
+          <PfCard key={s.platform} s={s} selected={selected === s.platform} onSelect={() => pick(s.platform)} />
         ))}
-      </ul>
-      {hidden > 0 && <p className="mt-3 text-[10px] text-label">ほか {hidden} 件（シグナル上位 {MAX_VISIBLE} 件を表示）</p>}
+      </div>
+
+      {/* フィルタ状態バー */}
+      <div className="mt-4 flex items-center gap-2 border-t border-line pt-3">
+        <span className="text-[12px] font-semibold text-heading">
+          {selected ? `${PLATFORM_LABEL[selected]} に絞り込み中` : "すべてのプラットフォーム"}
+        </span>
+        <span className="text-[11px] text-label">{selected ? `${selectedPosts.length}件` : `${posts.length}件`}</span>
+        {selected && (
+          <button
+            type="button"
+            onClick={reset}
+            className="ml-auto rounded-full border border-line bg-block px-3 py-0.5 text-[11px] text-label hover:text-body"
+          >
+            すべて表示
+          </button>
+        )}
+      </div>
+
+      {/* 下段B: PFごとの投稿一覧 */}
+      {selected ? (
+        <>
+          <PfGroup label={pfHeadLabel(selected)} count={selectedPosts.length} posts={selectedPosts.slice(0, visible)} />
+          {selectedPosts.length > visible && (
+            <button
+              type="button"
+              onClick={() => setVisible((v) => v + FILTER_STEP)}
+              className="mt-3 rounded-full border border-line bg-block px-3 py-1 text-[11px] text-label hover:text-body"
+            >
+              もっと見る（残り {selectedPosts.length - visible} 件）
+            </button>
+          )}
+        </>
+      ) : (
+        CROSS_PF_ORDER.filter((pf) => byPlatform.has(pf)).map((pf) => {
+          const all = byPlatform.get(pf) ?? [];
+          return <PfGroup key={pf} label={pfHeadLabel(pf)} count={all.length} posts={all.slice(0, ALL_LIMIT)} />;
+        })
+      )}
     </section>
   );
 }
