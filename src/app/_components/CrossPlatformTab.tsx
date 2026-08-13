@@ -342,8 +342,8 @@ export function CrossPlatformTab({ posts }: { posts: CrossPost[] }) {
         )}
       </div>
 
-      {/* 全PF混在の一覧 */}
-      <ul className="flex flex-col">
+      {/* 全PF混在の一覧（絞り込み変更をスクリーンリーダーに通知） */}
+      <ul aria-live="polite" className="flex flex-col">
         {shown.slice(0, visible).map((p) => (
           <PostRow key={p.insightId} p={p} />
         ))}

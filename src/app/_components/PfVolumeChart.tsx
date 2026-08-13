@@ -133,10 +133,17 @@ export function PfVolumeChart({
         const h = (b.count / yMax) * plotH;
         const y = PAD_TOP + plotH - h;
         const selected = selectedBinStartAt === b.startAt;
+        const clickable = b.count > 0; // 0件のビンは絞り込んでも空になるためクリック不可にする
         return (
-          <g key={b.startAt} onClick={() => onSelectBin(b.startAt)} style={{ cursor: "pointer" }}>
-            {/* クリック領域（透明・スロット全幅） */}
-            <rect x={PAD_LEFT + slot * i} y={PAD_TOP} width={slot} height={plotH} fill="transparent" />
+          <g
+            key={b.startAt}
+            onClick={clickable ? () => onSelectBin(b.startAt) : undefined}
+            style={{ cursor: clickable ? "pointer" : "default" }}
+          >
+            {/* クリック領域（透明・スロット全幅。0件バーには付けない） */}
+            {clickable && (
+              <rect x={PAD_LEFT + slot * i} y={PAD_TOP} width={slot} height={plotH} fill="transparent" />
+            )}
             {h > 0 && <rect x={xLeft(i)} y={y} width={barWidth} height={h} fill="var(--color-bar)" rx={1} />}
             {selected && (
               <rect
