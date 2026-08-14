@@ -7,6 +7,7 @@ import type { CrossPost, CrossPlatform } from "@/lib/types";
 import {
   buildCrossPlatformSummary,
   filterCrossPosts,
+  type CrossChartAxis,
   type CrossFilter,
   type PfSummary,
 } from "@/lib/view";
@@ -266,11 +267,12 @@ function PfBlock({
   );
 }
 
-export function CrossPlatformTab({ posts }: { posts: CrossPost[] }) {
+export function CrossPlatformTab({ posts, axis }: { posts: CrossPost[]; axis?: CrossChartAxis | null }) {
   const [filter, setFilter] = useState<CrossFilter | null>(null);
   const [visible, setVisible] = useState(LIST_STEP);
 
-  const summaries = useMemo(() => buildCrossPlatformSummary(posts), [posts]);
+  // axis を渡すと Xタイムラインと同じ時間軸で chartBins を作る（横位置を揃えるため）。
+  const summaries = useMemo(() => buildCrossPlatformSummary(posts, axis ?? null), [posts, axis]);
   const shown = useMemo(() => filterCrossPosts(posts, filter), [posts, filter]);
 
   if (posts.length === 0) {
