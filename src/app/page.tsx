@@ -14,12 +14,13 @@ import {
   toViewNotes,
   visibleNotes,
 } from "@/lib/view";
-import { CrossPlatformSection } from "./_components/CrossPlatformSection";
+import { CrossPlatformTab } from "./_components/CrossPlatformTab";
 import { FetchFailureNotice } from "./_components/FetchFailureNotice";
 import { Footer } from "./_components/Footer";
 import { Header } from "./_components/Header";
 import { ReportSection } from "./_components/ReportSection";
 import { StatCards } from "./_components/StatCards";
+import { Tabs } from "./_components/Tabs";
 import { TimelineExplorer } from "./_components/timeline/TimelineExplorer";
 
 // Blob の3ファイルは10分ごとにしか更新されないため(spec.md §5.2)、ISR も同じ間隔に揃える。
@@ -33,6 +34,7 @@ export default async function Page({ searchParams }: { searchParams: SearchParam
   const sp = await searchParams;
   const showExcluded = sp.showExcluded === "1";
   const useMock = shouldUseMock(sp.mock);
+  const initialTab = sp.tab === "other" ? "other" : "x";
 
   let notesFile: NotesFile | null = null;
   let clustersFile: ClustersFile | null = null;
@@ -102,33 +104,43 @@ export default async function Page({ searchParams }: { searchParams: SearchParam
         monitoringEnded={monitoringEnded}
       />
 
-      <div>
-        {fetchFailed && <FetchFailureNotice asOfLabel={hhmm(now)} />}
-        <StatCards stats={stats} binMinutes={timeline.binMinutes} />
-      </div>
-
-      <TimelineExplorer
-        bins={chartBins}
-        legend={display.order}
-        notes={panelNotes}
-        binMinutes={timeline.binMinutes}
-        mainshockAt={MAINSHOCK_AT}
-        initialSelectedIndex={peakBinIndex(timeline.bins)}
+      <Tabs
+        initialTab={initialTab}
+        xPanel={
+          <div className="flex flex-col gap-8">
+            <div>
+              {fetchFailed && <FetchFailureNotice asOfLabel={hhmm(now)} />}
+              <StatCards stats={stats} binMinutes={timeline.binMinutes} />
+            </div>
+            <TimelineExplorer
+              bins={chartBins}
+              legend={display.order}
+              notes={panelNotes}
+              binMinutes={timeline.binMinutes}
+              mainshockAt={MAINSHOCK_AT}
+              initialSelectedIndex={peakBinIndex(timeline.bins)}
+            />
+            {cumulativeMarkdown && (
+              <ReportSection
+                title="累積レポート"
+                metaLine="データソース: BirdXplorer / Xコミュニティノート ・ 更新: 毎日15:00 JST"
+                markdown={cumulativeMarkdown}
+                clusters={allClusters}
+                archiveDates={archiveDates}
+              />
+            )}
+          </div>
+        }
+        otherPanel={
+          crossPostsFile && crossPostsFile.posts.length > 0 ? (
+            <CrossPlatformTab posts={crossPostsFile.posts} />
+          ) : (
+            <p className="rounded-xl border border-line bg-card p-4 text-[13px] text-label">
+              他プラットフォームの観測データはまだありません。
+            </p>
+          )
+        }
       />
-
-      {crossPostsFile && crossPostsFile.posts.length > 0 && (
-        <CrossPlatformSection posts={crossPostsFile.posts} />
-      )}
-
-      {cumulativeMarkdown && (
-        <ReportSection
-          title="累積レポート"
-          metaLine="データソース: BirdXplorer / Xコミュニティノート ・ 更新: 毎日15:00 JST"
-          markdown={cumulativeMarkdown}
-          clusters={allClusters}
-          archiveDates={archiveDates}
-        />
-      )}
 
       <Footer />
     </div>

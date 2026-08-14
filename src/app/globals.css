@@ -35,6 +35,9 @@
   --color-cluster-7: #e34948;
   --color-cluster-other: #94a3b8;
 
+  /* 非Xチャートの単系列バー。stance/cluster/本震(赤)と衝突しない中立色 */
+  --color-bar: #5b7a9d;
+
   --font-sans:
     system-ui, -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", "Hiragino Sans",
     "Noto Sans JP", Meiryo, sans-serif;
