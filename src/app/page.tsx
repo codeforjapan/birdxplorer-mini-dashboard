@@ -83,6 +83,13 @@ export default async function Page({ searchParams }: { searchParams: SearchParam
   const nonExcluded = notes.filter((n) => !n.excluded);
   const display = buildDisplayClusters(nonExcluded, clusters);
   const chartBins = toChartBins(timeline.bins, display);
+  // 他プラットフォームのチャートを X タイムラインと同じ時間軸に揃えるための共通軸。
+  // timeline.bins は 30分刻みの連続ビンなので、その先頭・本数・刻み幅がそのまま軸になる。
+  // bins が空（取得失敗など）のときは null を渡し、非X側は従来どおり自前の範囲にフォールバックする。
+  const crossAxis =
+    timeline.bins.length > 0
+      ? { startAt: timeline.bins[0].startAt, binCount: timeline.bins.length, binMs: timeline.binMinutes * 60 * 1000 }
+      : null;
   // レポートのクラスタ別ブロック(design.md §6.7)は9位以下も含めた全クラスタに対応する
   // 必要があるため、グラフ用の上位8+その他集約(display.order)ではなく全件を渡す。
   const allClusters = buildAllDisplayClusters(nonExcluded, clusters);
@@ -133,7 +140,7 @@ export default async function Page({ searchParams }: { searchParams: SearchParam
         }
         otherPanel={
           crossPostsFile && crossPostsFile.posts.length > 0 ? (
-            <CrossPlatformTab posts={crossPostsFile.posts} />
+            <CrossPlatformTab posts={crossPostsFile.posts} axis={crossAxis} />
           ) : (
             <p className="rounded-xl border border-line bg-card p-4 text-[13px] text-label">
               他プラットフォームの観測データはまだありません。

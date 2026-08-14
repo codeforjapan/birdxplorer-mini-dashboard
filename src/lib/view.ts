@@ -468,8 +468,16 @@ export type PfSummary = {
 };
 
 /** PF別サマリー(chartBins は全PF共通軸)を CROSS_PF_ORDER 順に返す(件数0のPFは除外)。 */
-export function buildCrossPlatformSummary(posts: readonly CrossPost[]): PfSummary[] {
-  const axis = crossChartAxis(posts);
+/**
+ * axisOverride を渡すと chartBins をその共通軸で作る（Xタイムラインと横位置を揃えるため）。
+ * 省略・null の場合は従来どおり非X投稿の範囲（crossChartAxis）を使う。
+ * 軸外（範囲前後）の投稿はチャートから外れるが、count・一覧には従来どおり含める。
+ */
+export function buildCrossPlatformSummary(
+  posts: readonly CrossPost[],
+  axisOverride?: CrossChartAxis | null,
+): PfSummary[] {
+  const axis = axisOverride ?? crossChartAxis(posts);
   const out: PfSummary[] = [];
   for (const platform of CROSS_PF_ORDER) {
     const group = posts.filter((p) => p.platform === platform);
