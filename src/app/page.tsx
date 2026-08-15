@@ -1,7 +1,8 @@
-import { BIN_MINUTES, MAINSHOCK_AT } from "@/lib/constants";
+import { BIN_MINUTES } from "@/lib/constants";
+import { EVENT } from "@/lib/event";
 import { PATH, listDailyReports, readJson, readText } from "@/lib/blob";
 import { generateMock, shouldUseMock } from "@/lib/mock";
-import { hhmm, mmddhhmm, stampJst } from "@/lib/time";
+import { hhmm, isoDate, mmddhhmm, stampJst } from "@/lib/time";
 import type { ClustersFile, CrossPostsFile, NotesFile, TimelineFile } from "@/lib/types";
 import {
   buildAllDisplayClusters,
@@ -10,6 +11,7 @@ import {
   nowMs,
   peakBinIndex,
   safeIsMonitoringEnded,
+  safeMonitoringEndedLabel,
   toChartBins,
   toViewNotes,
   visibleNotes,
@@ -51,7 +53,7 @@ export default async function Page({ searchParams }: { searchParams: SearchParam
     timelineFile = mock.timeline;
     crossPostsFile = mock.crossPosts;
     cumulativeMarkdown = mock.report;
-    archiveDates = ["2026-07-28"];
+    archiveDates = [isoDate(EVENT.occurredAt)];
   } else {
     try {
       [notesFile, clustersFile, timelineFile, crossPostsFile, cumulativeMarkdown, archiveDates] = await Promise.all([
@@ -109,6 +111,7 @@ export default async function Page({ searchParams }: { searchParams: SearchParam
         totalNotes={stats.totalNotes}
         updatedAtLabel={generatedAt ? stampJst(generatedAt) : null}
         monitoringEnded={monitoringEnded}
+        monitoringEndedLabel={safeMonitoringEndedLabel()}
       />
 
       <Tabs
@@ -124,7 +127,7 @@ export default async function Page({ searchParams }: { searchParams: SearchParam
               legend={display.order}
               notes={panelNotes}
               binMinutes={timeline.binMinutes}
-              mainshockAt={MAINSHOCK_AT}
+              mainshockAt={EVENT.occurredAt}
               initialSelectedIndex={peakBinIndex(timeline.bins)}
             />
             {cumulativeMarkdown && (

@@ -1,4 +1,5 @@
 import { runCronJob } from "@/lib/cron";
+import { hasSearchlightConfig } from "@/lib/env";
 import { getCrossInsights, getInsights } from "@/lib/searchlight";
 import { upsertCrossPosts, upsertSearchlightInsights } from "@/lib/store";
 import { ensureMigrated } from "../_lib/migrate-once";
@@ -13,7 +14,11 @@ export const maxDuration = 60;
  * Vercel cron は GET で叩くため GET が本体。POST は手動実行用。
  */
 export async function GET(req: Request): Promise<Response> {
-  return runCronJob("searchlight-sync", req, async () => {
+  return runCronJob("searchlight-sync", req, async (): Promise<Record<string, number>> => {
+    // Searchlight は任意の拡張機能。未設定環境（別テーマへの転用時など）では
+    // vercel.json の cron 設定を書き換えずに済むよう、ここで無害に skip する。
+    if (!hasSearchlightConfig()) return { skipped: 1 };
+
     await ensureMigrated();
     const rows = await getInsights();
     await upsertSearchlightInsights(rows);

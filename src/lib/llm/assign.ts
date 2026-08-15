@@ -1,8 +1,10 @@
 import { z } from "zod";
 import { activeClusters } from "../clusters";
+import { EVENT } from "../event";
 import type { Cluster } from "../types";
 import { chatJson, chunk } from "./client";
 import type { AssignInput, ClusterAssignment, LlmBatchResult } from "./contract";
+import { TAXONOMY } from "./taxonomy";
 
 /**
  * Stage 2 — クラスタ割当（docs/spec.md §4 Stage 2）。
@@ -22,7 +24,7 @@ const CHUNK_SIZE = 20;
 
 const ASSIGN_SYSTEM_PROMPT = `あなたはXコミュニティノートを「噂の種類（クラスタ）」に分類するアシスタントです。
 
-対象はすべて「2026年7月28日の熊本地震」に関連すると判定済みのノートです。
+対象はすべて「${EVENT.llmContextPhraseCompact}」に関連すると判定済みのノートです。
 クラスタは固定のタクソノミーではなく、これまでに見つかった「噂・誤情報の型」の一覧です。
 
 分類方針（最重要）:
@@ -30,8 +32,8 @@ const ASSIGN_SYSTEM_PROMPT = `あなたはXコミュニティノートを「噂�
 - 新規クラスタ（kind: "new"）を提案してよいのは、既存のどのクラスタとも噂の内容が明確に異なる場合だけです。
   「表現が違うだけで言っている内容は同じ噂」は既存クラスタに寄せてください。新規提案を安易に増やさないでください。
 - クラスタ名（name）は日本語で短く、「何のトピックか」ではなく「どんな噂・誤情報か」を表すものにしてください。
-  良い例: 「支援物資デマ」「なりすまし公式アカウント」「津波過大予測の誤情報」
-  悪い例: 「地震について」「熊本関連」のようなトピック名そのもの
+  良い例: ${TAXONOMY.clusterNamingGoodExamples}
+  悪い例: ${TAXONOMY.clusterNamingBadExamples}のようなトピック名そのもの
 - description は1-2文で、その噂が具体的にどういう内容かを説明してください。
 
 既存クラスタが1件もない場合のみ、最初のノートから新規クラスタを起こして構いません。

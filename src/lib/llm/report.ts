@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { EVENT } from "../event";
 import { mmddhhmm } from "../time";
 import { chatJson } from "./client";
 import type { DigestInput } from "./contract";
@@ -38,7 +39,7 @@ function stripMarkdownFence(text: string): string {
 
 // ── Stage 4: 日次ダイジェスト ──
 
-const DIGEST_SYSTEM_PROMPT = `あなたは「2026年7月28日の熊本地震」に関する誤情報モニタリングサイトの日次ダイジェストを書く記者です。
+const DIGEST_SYSTEM_PROMPT = `あなたは「${EVENT.llmContextPhraseCompact}」に関する誤情報モニタリングサイトの日次ダイジェストを書く記者です。
 出力は日本語 Markdown 本文のみです（JSONのキーは "markdown" 1つだけで、その値が本文全体になります）。
 
 厳守するフォーマット:
@@ -114,7 +115,7 @@ export async function writeDailyDigest(input: DigestInput): Promise<string | nul
  * 代わりに長さを Vercel のランタイムログに記録し、運用時に気づけるようにする
  * （docs/spec.md §8-7: ログが唯一の監視手段）。
  */
-const CUMULATIVE_SYSTEM_PROMPT = `あなたは「2026年7月28日の熊本地震」に関する誤情報モニタリングサイトの累積レポートを維持する編集者です。
+const CUMULATIVE_SYSTEM_PROMPT = `あなたは「${EVENT.llmContextPhraseCompact}」に関する誤情報モニタリングサイトの累積レポートを維持する編集者です。
 このレポートは運用終了（2026年8月31日）まで毎日、当日分のダイジェストを継ぎ足しながら更新され続けます。
 出力は日本語 Markdown 本文のみです（JSONのキーは "markdown" 1つだけで、その値が本文全体になります）。
 

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { llmEnv } from "../env";
+import { EVENT } from "../event";
 
 /**
  * OpenRouter への薄いトランスポート層。
@@ -21,8 +22,8 @@ const OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 
 // OpenRouter のアプリ帰属ヘッダー（ランキング・サポート追跡用。API 動作には必須ではない）。
 // 独自ドメインを取得していない運用（docs/spec.md 1章）のため固定文字列で代用する。
-const HTTP_REFERER = "https://github.com/code4japan/kumamoto-birdxplorer";
-const X_TITLE = "kumamoto-birdxplorer";
+const HTTP_REFERER = `https://github.com/${EVENT.githubRepo}`;
+const X_TITLE = EVENT.appTitle;
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 /** 1回の「質問」（ask）あたりのHTTPレベル再試行回数（429/5xx/network/timeout 用）。 */
