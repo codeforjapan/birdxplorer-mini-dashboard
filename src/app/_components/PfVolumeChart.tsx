@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { EVENT } from "@/lib/event";
 import { hhmm } from "@/lib/time";
 import type { CrossChartBin } from "@/lib/view";
 
@@ -135,7 +136,7 @@ export function PfVolumeChart({
               vectorEffect="non-scaling-stroke"
             />
             <text x={mainshockX + 3} y={PAD_TOP + 8} fontSize={8.5} fill="var(--color-accent)">
-              本震 {hhmm(mainshockAt)}
+              {EVENT.keyMomentLabel} {hhmm(mainshockAt)}
             </text>
           </>
         )}

@@ -5,7 +5,9 @@ import { formatCount, type StatCards as StatCardsData } from "@/lib/view";
 /**
  * 統計カード(design.md §6.2)。カード3・4(最大クラスタ・ピーク帯)は呼び出し側で
  * 実データから算出済みの値を受け取るだけで、ここではハードコードしない。
- * カード2(本震)だけは spec.md 上固定の事実(M7.1 / 16:27)なので event.ts から組み立てる。
+ * カード2(本震)だけは spec.md 上固定の事実(M7.1 / 16:27)なので event.ts の
+ * 整形済み値をそのまま表示する（フォーマットの組み立てはここでは行わない。
+ * 別テーマでは「本震」に相当するものの形が変わりうるため event.ts 参照）。
  *
  * 件数は formatCount で整形する。toLocaleString は環境によって表記が変わり
  * ハイドレーション不一致を招くため使わない(view.ts のコメント参照)。
@@ -25,11 +27,7 @@ export function StatCards({ stats, binMinutes }: { stats: StatCardsData; binMinu
           stats.excludedCount !== null ? `うち除外${formatCount(stats.excludedCount)}件` : undefined
         }
       />
-      <StatCard
-        label={EVENT.keyMomentLabel}
-        value={`${EVENT.keyMomentMagnitude} / ${hhmm(EVENT.occurredAt)}`}
-        valueClassName="text-accent"
-      />
+      <StatCard label={EVENT.keyMomentLabel} value={EVENT.keyMomentValue} valueClassName="text-accent" />
       <StatCard
         label="最大クラスタ"
         value={stats.largestCluster?.name ?? "—"}
