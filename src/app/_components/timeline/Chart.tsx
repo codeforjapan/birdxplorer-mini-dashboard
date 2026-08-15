@@ -1,6 +1,7 @@
 "use client";
 
-import { hhmm } from "@/lib/time";
+import { EVENT } from "@/lib/event";
+import { binStart, hhmm, nextBin } from "@/lib/time";
 import type { ChartBin, DisplayCluster } from "@/lib/view";
 
 /**
@@ -22,7 +23,7 @@ const W = 960;
 const H = 320;
 const PAD_LEFT = 28; // Y軸ラベル用の幅(§6.3)
 const PAD_RIGHT = 8;
-const PAD_TOP = 28; // 「本震 16:27」ラベルの余白
+const PAD_TOP = 28; // 「{EVENT.keyMomentLabel} 16:27」ラベルの余白
 const PAD_BOTTOM = 22; // X軸目盛りラベル用
 
 /** 整数のみのY軸目盛りを生成する(§6.3: 「Y軸:整数のみ」)。 */
@@ -101,8 +102,11 @@ export function Chart({
   const tickEvery3 = bins.map((b, i) => ({ i, bin: b })).filter(({ i }) => i % 3 === 0);
   const tickEvery4 = bins.map((b, i) => ({ i, bin: b })).filter(({ i }) => i % 4 === 0);
 
-  // 本震の基準線: 「16:30」のビンの左端に破線を引く(design.md §6.3)。
-  const mainshockBinIndex = bins.findIndex((b) => hhmm(b.startAt) === "16:30");
+  // 基準線: mainshockAt を含むビンの「次のビン」の左端に破線を引く(design.md §6.3)。
+  // 本震(16:27)の場合、これは常に「16:30」のビンになる。ハードコードした時刻文字列で
+  // 照合すると mainshockAt を変えた途端に一致しなくなる(=線が消える)ため、
+  // 必ず mainshockAt から動的に算出する。
+  const mainshockBinIndex = bins.findIndex((b) => b.startAt === nextBin(binStart(mainshockAt)));
 
   const hovered = hoveredIndex !== null ? bins[hoveredIndex] : null;
   const hoveredTop = hovered ? scaleY(hovered.total) : 0;
@@ -305,7 +309,7 @@ export function Chart({
               fontSize={10}
               fill="var(--color-accent)"
             >
-              本震 {hhmm(mainshockAt)}
+              {EVENT.keyMomentLabel} {hhmm(mainshockAt)}
             </text>
           </g>
         )}
