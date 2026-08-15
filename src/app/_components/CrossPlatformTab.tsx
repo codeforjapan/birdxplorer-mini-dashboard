@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { MAINSHOCK_AT } from "@/lib/constants";
+import { EVENT } from "@/lib/event";
 import { mmddhhmm } from "@/lib/time";
 import type { CrossPost, CrossPlatform } from "@/lib/types";
 import {
@@ -258,7 +258,7 @@ function PfBlock({
         <div className="mb-1 text-[10px] text-label">投稿量の推移（30分・クリックで絞り込み）</div>
         <PfVolumeChart
           bins={s.chartBins}
-          mainshockAt={MAINSHOCK_AT}
+          mainshockAt={EVENT.occurredAt}
           selectedBinStartAt={selectedBinStartAt}
           onSelectBin={onPickBin}
         />
