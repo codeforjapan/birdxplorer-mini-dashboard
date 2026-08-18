@@ -27,15 +27,25 @@ function isAuthorized(req: Request): boolean {
 /** ジョブ本体。返した値は実行記録の stats に入る。 */
 export type JobBody = () => Promise<Record<string, number>>;
 
-export async function runCronJob(job: JobName, req: Request, body: JobBody): Promise<Response> {
+/**
+ * 認証・スキップ判定・実行記録・エラー処理を共通化した内部枠。
+ * ゲート（いつ body を呼ばず即返すか）だけを `skipReason` で外から差し込む。
+ * `skipReason` が文字列を返したら body を実行せず `{skipped}` を返す（null なら実行）。
+ */
+async function runGatedJob(
+  job: JobName,
+  req: Request,
+  body: JobBody,
+  skipReason: () => string | null,
+): Promise<Response> {
   if (!isAuthorized(req)) {
     // 認証失敗は KV に記録しない（外部からの試行でジョブ履歴が埋まるのを防ぐ）。
     return Response.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  // 8/31 を過ぎたら何もしない。デプロイは残し、サイトは静的アーカイブとして機能させる。
-  if (isMonitoringEnded()) {
-    return Response.json({ job, skipped: "monitoring-ended" });
+  const skipped = skipReason();
+  if (skipped) {
+    return Response.json({ job, skipped });
   }
 
   const startedAt = Date.now();
@@ -68,4 +78,21 @@ export async function runCronJob(job: JobName, req: Request, body: JobBody): Pro
     { job, ok: run.ok, durationMs: run.finishedAt - run.startedAt, stats: run.stats, error: run.error },
     { status: run.ok ? 200 : 500 },
   );
+}
+
+/**
+ * 通常 cron の共通枠。監視終了（MONITOR_END_DATE 経過）後は body を呼ばず no-op。
+ * デプロイは残し、サイトは静的アーカイブとして機能させる。
+ */
+export async function runCronJob(job: JobName, req: Request, body: JobBody): Promise<Response> {
+  return runGatedJob(job, req, body, () => (isMonitoringEnded() ? "monitoring-ended" : null));
+}
+
+/**
+ * 停止（shutdown）ジョブの共通枠。runCronJob とゲートが真逆で、**監視期間が終わってから**
+ * 本体を動かす（例: MONITOR_END_DATE 経過後に外部収集を止める）。運用中（未終了）は no-op。
+ * body は冪等であること（毎回叩かれても無害）を前提にする。
+ */
+export async function runShutdownJob(job: JobName, req: Request, body: JobBody): Promise<Response> {
+  return runGatedJob(job, req, body, () => (isMonitoringEnded() ? null : "monitoring-active"));
 }

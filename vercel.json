@@ -5,6 +5,7 @@
     { "path": "/api/cron/recluster", "schedule": "5 * * * *" },
     { "path": "/api/cron/refresh-status", "schedule": "35 * * * *" },
     { "path": "/api/cron/report", "schedule": "0 6 * * *" },
-    { "path": "/api/cron/searchlight-sync", "schedule": "15,45 * * * *" }
+    { "path": "/api/cron/searchlight-sync", "schedule": "15,45 * * * *" },
+    { "path": "/api/cron/searchlight-stop", "schedule": "23 * * * *" }
   ]
 }

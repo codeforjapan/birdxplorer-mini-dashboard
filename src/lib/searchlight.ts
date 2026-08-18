@@ -49,6 +49,49 @@ function firstUrl(v: unknown): string | null {
   return null;
 }
 
+// ── 収集停止（アーカイブ時）─────────────────────────────────
+// MONITOR_END_DATE を過ぎたら収集を止めるための純ロジック。特定トピックIDを知らずとも、
+// 「収集が有効なトピック」を列挙して無効化計画に落とす（会社の全イベントトピックが対象）。
+
+type PlatformCollectionConfig = { enabled?: boolean; [k: string]: unknown };
+type TopicCollectionConfig = { enabled: boolean; platforms: PlatformCollectionConfig[]; [k: string]: unknown };
+/** 1トピック分の無効化 PUT 計画。collectionConfig はそのまま `{collectionConfig}` として送れる。 */
+export type ShutdownPlan = { topicId: string; collectionConfig: TopicCollectionConfig };
+
+/**
+ * collectionConfig を型ガードする。platforms はオブジェクト要素だけ残す（非オブジェクトの
+ * ゴミのみ除外）。有効な platform を PUT body から落とさないため、enabled 欠落でも要素は保持する
+ * （後段で enabled=false を付与する）。
+ */
+function asTopicConfig(v: unknown): TopicCollectionConfig | null {
+  if (!isRecord(v) || typeof v.enabled !== "boolean" || !Array.isArray(v.platforms)) return null;
+  const platforms = v.platforms.filter(isRecord) as PlatformCollectionConfig[];
+  return { ...v, enabled: v.enabled, platforms };
+}
+
+/**
+ * トピック一覧（`GET /companies/{co}/topics` の生レスポンス）から、収集が有効なトピックだけを
+ * 「無効化 PUT 計画」に変換する純関数。トピック本体 enabled やその他フィールドは触らず、
+ * collectionConfig.enabled と全 PF の enabled を false に落とすだけ（web の mrd 等は現状維持＝
+ * ①で踏んだ "web は metadata refresh 非対応" 400 を避ける）。何も有効でなければ空配列（完全 no-op）。
+ */
+export function planCollectionShutdown(topicsRaw: unknown): ShutdownPlan[] {
+  const topics = extractItems(topicsRaw);
+  const plans: ShutdownPlan[] = [];
+  for (const t of topics) {
+    if (!isRecord(t) || typeof t.id !== "string") continue;
+    const cc = asTopicConfig(t.collectionConfig);
+    if (!cc) continue;
+    const anyEnabled = cc.enabled || cc.platforms.some((p) => p.enabled === true);
+    if (!anyEnabled) continue;
+    plans.push({
+      topicId: t.id,
+      collectionConfig: { ...cc, enabled: false, platforms: cc.platforms.map((p) => ({ ...p, enabled: false })) },
+    });
+  }
+  return plans;
+}
+
 /**
  * Searchlight の生 insight を DB 行へ変換する。x 以外・必須列挙値欠落は null（＝保存しない）。
  * post 本文・AI 自由文は取り出さない（非永続ルール）。
@@ -262,4 +305,29 @@ export async function getCrossInsights(now: number = Date.now()): Promise<CrossP
     }
   }
   return rows;
+}
+
+/**
+ * 会社の収集を停止する（アーカイブ時）。有効なトピックの collectionConfig を無効化 PUT する。
+ * 特定トピックIDは不要（`planCollectionShutdown` が有効トピックを見つける）。冪等＝有効トピックが
+ * 無ければ何もせず 0 を返す。PUT は `TopicRequest` の部分更新で、body は `{collectionConfig}` だけ送る
+ * （`transcriptionPrompt:null` を含めると 400 になるため）。返り値の topicsDisabled は実際に PUT した数。
+ */
+export async function disableCollection(): Promise<{ topicsDisabled: number }> {
+  const cfg = searchlightEnv();
+  const token = await getToken();
+  const res = await fetch(`${cfg.SEARCHLIGHT_BASE_URL}/companies/${cfg.SEARCHLIGHT_COMPANY_ID}/topics`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`Searchlight topics 取得失敗: ${res.status}`);
+  const plans = planCollectionShutdown(await res.json());
+  for (const plan of plans) {
+    const put = await fetch(`${cfg.SEARCHLIGHT_BASE_URL}/companies/${cfg.SEARCHLIGHT_COMPANY_ID}/topics/${plan.topicId}`, {
+      method: "PUT",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ collectionConfig: plan.collectionConfig }),
+    });
+    if (!put.ok) throw new Error(`Searchlight collectionConfig 無効化失敗 (topic=${plan.topicId}): ${put.status}`);
+  }
+  return { topicsDisabled: plans.length };
 }
