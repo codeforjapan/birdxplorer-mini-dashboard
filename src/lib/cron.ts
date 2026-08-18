@@ -69,3 +69,50 @@ export async function runCronJob(job: JobName, req: Request, body: JobBody): Pro
     { status: run.ok ? 200 : 500 },
   );
 }
+
+/**
+ * 停止（shutdown）ジョブの共通枠。runCronJob とゲートだけが真逆で、
+ * **監視期間が終わってから**本体を動かす（例: MONITOR_END_DATE 経過後に外部収集を止める）。
+ * 認証・実行記録・エラー処理は runCronJob と同じ。運用中（未終了）は body を呼ばず即返す。
+ * body は冪等であること（毎回叩かれても無害）を前提にする。
+ */
+export async function runShutdownJob(job: JobName, req: Request, body: JobBody): Promise<Response> {
+  if (!isAuthorized(req)) {
+    return Response.json({ error: "unauthorized" }, { status: 401 });
+  }
+
+  // 運用中は何もしない。監視終了（MONITOR_END_DATE 翌日 00:00 JST 以降）に初めて停止処理を走らせる。
+  if (!isMonitoringEnded()) {
+    return Response.json({ job, skipped: "monitoring-active" });
+  }
+
+  const startedAt = Date.now();
+  let run: JobRun;
+
+  try {
+    const stats = await body();
+    run = { job, startedAt, finishedAt: Date.now(), ok: true, stats, error: null };
+  } catch (e) {
+    run = {
+      job,
+      startedAt,
+      finishedAt: Date.now(),
+      ok: false,
+      stats: {},
+      error: e instanceof Error ? `${e.name}: ${e.message}` : String(e),
+    };
+  }
+
+  try {
+    await recordRun(run);
+  } catch (e) {
+    console.error(`[cron:${job}] 実行記録の書き込みに失敗`, e);
+  }
+
+  if (!run.ok) console.error(`[cron:${job}] 失敗`, run.error);
+
+  return Response.json(
+    { job, ok: run.ok, durationMs: run.finishedAt - run.startedAt, stats: run.stats, error: run.error },
+    { status: run.ok ? 200 : 500 },
+  );
+}

@@ -163,4 +163,11 @@ export type CrossPostsFile = {
   posts: CrossPost[];
 };
 
-export type JobName = "ingest" | "recluster" | "refresh-status" | "report" | "reclassify" | "searchlight-sync";
+export type JobName =
+  | "ingest"
+  | "recluster"
+  | "refresh-status"
+  | "report"
+  | "reclassify"
+  | "searchlight-sync"
+  | "searchlight-stop";
