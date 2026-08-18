@@ -53,23 +53,20 @@ function firstUrl(v: unknown): string | null {
 // MONITOR_END_DATE を過ぎたら収集を止めるための純ロジック。特定トピックIDを知らずとも、
 // 「収集が有効なトピック」を列挙して無効化計画に落とす（会社の全イベントトピックが対象）。
 
-type PlatformCollectionConfig = { platform: string; enabled: boolean; [k: string]: unknown };
+type PlatformCollectionConfig = { enabled?: boolean; [k: string]: unknown };
 type TopicCollectionConfig = { enabled: boolean; platforms: PlatformCollectionConfig[]; [k: string]: unknown };
 /** 1トピック分の無効化 PUT 計画。collectionConfig はそのまま `{collectionConfig}` として送れる。 */
 export type ShutdownPlan = { topicId: string; collectionConfig: TopicCollectionConfig };
 
-function asPlatform(v: unknown): PlatformCollectionConfig | null {
-  if (!isRecord(v) || typeof v.platform !== "string" || typeof v.enabled !== "boolean") return null;
-  return v as PlatformCollectionConfig;
-}
+/**
+ * collectionConfig を型ガードする。platforms はオブジェクト要素だけ残す（非オブジェクトの
+ * ゴミのみ除外）。有効な platform を PUT body から落とさないため、enabled 欠落でも要素は保持する
+ * （後段で enabled=false を付与する）。
+ */
 function asTopicConfig(v: unknown): TopicCollectionConfig | null {
   if (!isRecord(v) || typeof v.enabled !== "boolean" || !Array.isArray(v.platforms)) return null;
-  const platforms: PlatformCollectionConfig[] = [];
-  for (const p of v.platforms) {
-    const pc = asPlatform(p);
-    if (pc) platforms.push(pc);
-  }
-  return { ...v, enabled: v.enabled, platforms } as TopicCollectionConfig;
+  const platforms = v.platforms.filter(isRecord) as PlatformCollectionConfig[];
+  return { ...v, enabled: v.enabled, platforms };
 }
 
 /**
@@ -85,7 +82,7 @@ export function planCollectionShutdown(topicsRaw: unknown): ShutdownPlan[] {
     if (!isRecord(t) || typeof t.id !== "string") continue;
     const cc = asTopicConfig(t.collectionConfig);
     if (!cc) continue;
-    const anyEnabled = cc.enabled || cc.platforms.some((p) => p.enabled);
+    const anyEnabled = cc.enabled || cc.platforms.some((p) => p.enabled === true);
     if (!anyEnabled) continue;
     plans.push({
       topicId: t.id,

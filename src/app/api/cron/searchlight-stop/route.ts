@@ -14,9 +14,7 @@ export const maxDuration = 60;
  * Vercel cron は GET で叩く。POST は手動実行用。
  */
 export async function GET(req: Request): Promise<Response> {
-  return runShutdownJob("searchlight-stop", req, async () => {
-    return disableCollection();
-  });
+  return runShutdownJob("searchlight-stop", req, disableCollection);
 }
 
 export const POST = GET;
