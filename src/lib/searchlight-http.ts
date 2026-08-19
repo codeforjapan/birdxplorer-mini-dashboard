@@ -42,6 +42,14 @@ export function retryDelayMs(status: number, retryAfter: string | null, attempt:
   return status >= 500 ? backoff : null;
 }
 
+/**
+ * 1回の cron 実行ぶんの Searchlight アクセス。
+ *
+ * **逐次利用のみを前提とする。** 1つの session を並行利用（`Promise.all` など）してはならない。
+ * getToken() が await をまたぐため (1) トークンを二重取得し、より重要な点として
+ * (2) 外部APIへのバーストを生む＝この層が防いでいる事故そのものの方向に戻る。
+ * ミューテックスは持たない（逐次で使う限り不要な機構であり、並行を許す口を作らないことが目的）。
+ */
 export type SearchlightSession = {
   /** base URL 以降のパス（クエリ込み）を渡す。例: `/companies/{id}/insights?platform=x&limit=100&page=1` */
   getJson(path: string): Promise<unknown>;
@@ -66,7 +74,7 @@ const defaultSleep = (ms: number): Promise<void> => new Promise((r) => setTimeou
 
 /**
  * 1回の cron 実行に対して1つ作る。token をこのセッション内で共有し、
- * リクエスト数を数えて予算で打ち切る。
+ * リクエスト数を数えて予算で打ち切る。返す session は逐次利用のみ（SearchlightSession 参照）。
  */
 export function createSession(opts: SessionOptions = {}): SearchlightSession {
   const budget = opts.budget ?? DEFAULT_BUDGET;

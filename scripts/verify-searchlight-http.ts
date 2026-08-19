@@ -6,13 +6,15 @@
  * 実行: pnpm dlx tsx scripts/verify-searchlight-http.ts
  */
 import assert from "node:assert/strict";
-import { isTooSoon, MIN_SYNC_INTERVAL_MS } from "../src/lib/cron";
+import { isForceRequested, isTooSoon, MIN_SYNC_INTERVAL_MS } from "../src/lib/cron";
 import type { SearchlightEnv } from "../src/lib/env";
+import { getInsights } from "../src/lib/searchlight";
 import {
   createSession,
   MAX_SLEEP_MS,
   retryDelayMs,
   SearchlightBudgetExceededError,
+  type SearchlightSession,
 } from "../src/lib/searchlight-http";
 import type { JobRun } from "../src/lib/types";
 
@@ -22,6 +24,10 @@ const ENV: SearchlightEnv = {
   SEARCHLIGHT_CLIENT_SECRET: "csec",
   SEARCHLIGHT_COMPANY_ID: "co",
 };
+
+// searchlight.ts のページングは searchlightEnv() で会社IDを読む。session を fake に
+// 差し替えるので実 API は叩かない＝ダミー値で足りる。
+Object.assign(process.env, ENV);
 
 const TOKEN_BODY = { access_token: "T", token_type: "Bearer", expires_in: 3600, scope: "read" };
 
@@ -43,6 +49,40 @@ function fakeFetch(script: readonly (() => Response)[]) {
     return next();
   }) as unknown as typeof fetch;
   return { impl, urls };
+}
+
+/**
+ * insights ページングの fake session。page <= fullPages は満杯（1ページ上限の100件）を返し、
+ * それ以降は3件だけ返す（＝最終ページ）。fullPages=50 なら MAX_PAGES 打ち切りを再現する。
+ */
+function fakeInsightSession(fullPages: number): { session: SearchlightSession; pages: number[] } {
+  const pages: number[] = [];
+  let count = 0;
+  const item = (i: number): unknown => ({
+    platform: "x",
+    original_post_id: `t${i}`,
+    payload: {
+      urgency: "LOW",
+      claim_type: "RUMOR_OR_UNVERIFIED",
+      official_source_relationship: "no_official_source",
+    },
+  });
+  const session: SearchlightSession = {
+    async getJson(path: string): Promise<unknown> {
+      count++;
+      const page = Number(new URL(`https://example.test${path}`).searchParams.get("page"));
+      pages.push(page);
+      const size = page <= fullPages ? 100 : 3;
+      return Array.from({ length: size }, (_, i) => item(page * 100 + i));
+    },
+    async putJson(): Promise<void> {
+      throw new Error("この検証では putJson を使わない");
+    },
+    get requestCount(): number {
+      return count;
+    },
+  };
+  return { session, pages };
 }
 
 function fakeSleep() {
@@ -182,6 +222,37 @@ const checks: [string, () => Promise<void> | void][] = [
     "10: 間隔は20時間（24時間だと日次 cron が1日飛ぶ）",
     () => {
       assert.equal(MIN_SYNC_INTERVAL_MS, 20 * 60 * 60 * 1000);
+    },
+  ],
+  [
+    "11: ?force=1 だけがゲートを飛ばす（cron 経路＝クエリ無しは飛ばさない）",
+    () => {
+      const u = (q: string) => `https://dash.test/api/cron/searchlight-sync${q}`;
+      // Vercel cron はクエリ無しで叩く。ここが false であることが日次上限の不変条件の土台。
+      assert.equal(isForceRequested(u("")), false, "クエリ無しでは飛ばさない");
+      assert.equal(isForceRequested(u("?force=1")), true);
+      assert.equal(isForceRequested(u("?a=b&force=1")), true, "他のクエリと併用しても効く");
+      // 逃げ道は意図的に狭い。=1 の厳密比較なので下は効かない（仕様として固定する）。
+      assert.equal(isForceRequested(u("?force=true")), false, "true では効かない");
+      assert.equal(isForceRequested(u("?force")), false, "値なしでは効かない");
+      assert.equal(isForceRequested(u("?force=0")), false);
+      assert.equal(isForceRequested(u("?forced=1")), false);
+    },
+  ],
+  [
+    "12: 安全上限での打ち切りを truncated で返す（最終ページ到達と区別する）",
+    async () => {
+      const hitLimit = fakeInsightSession(50);
+      const truncated = await getInsights(hitLimit.session, 0);
+      assert.equal(truncated.truncated, true, "満杯のまま MAX_PAGES を使い切ったら打ち切り");
+      assert.equal(hitLimit.pages.length, 50, "MAX_PAGES を超えてページを叩かない");
+      assert.equal(truncated.rows.length, 5000);
+
+      const lastPage = fakeInsightSession(1);
+      const complete = await getInsights(lastPage.session, 0);
+      assert.equal(complete.truncated, false, "1ページ上限未満が返ったら正常終了");
+      assert.equal(lastPage.pages.length, 2);
+      assert.equal(complete.rows.length, 103);
     },
   ],
 ];

@@ -226,8 +226,13 @@ function extractItems(body: unknown): unknown[] {
 
 // insights API の1ページ上限（OpenAPI: limit は最大100）。
 const PAGE_SIZE = 100;
-// 暴走防止の安全上限（最大 100×50=5000件）。実運用の insight 数は数十〜数百規模。
+// 暴走防止の安全上限（1PFあたり最大 100×50=5000件）。実測（2026-08-19）は5PF計7,757件で、
+// 最大の web が 4,652件=47ページ＝上限まで残り約7%しかない。収集を再開すれば web は
+// この上限に当たる。当たったことは truncated で呼び出し側に返す（無言で落とさない）。
 const MAX_PAGES = 50;
+
+/** 1PF分の取得結果。truncated は MAX_PAGES で打ち切った＝データを落とした可能性を表す。 */
+export type InsightPage<T> = { rows: T[]; truncated: boolean };
 
 /**
  * insights を platform で絞ってページングし、map が返した行だけを集める。
@@ -247,9 +252,10 @@ async function collectInsightPages<T>(
   session: SearchlightSession,
   platform: string,
   map: (raw: unknown) => T | null,
-): Promise<T[]> {
+): Promise<InsightPage<T>> {
   const cfg = searchlightEnv();
   const rows: T[] = [];
+  let truncated = false;
   for (let page = 1; page <= MAX_PAGES; page++) {
     const body = await session.getJson(
       `/companies/${cfg.SEARCHLIGHT_COMPANY_ID}/insights?platform=${platform}&limit=${PAGE_SIZE}&page=${page}`,
@@ -259,16 +265,21 @@ async function collectInsightPages<T>(
       const row = map(raw);
       if (row) rows.push(row);
     }
+    // ループの終わり方は2種類あり、意味が正反対なので区別する。
+    // (a) 1ページ上限未満が返った＝最終ページに到達（正常・全件取得できた）
+    // (b) 満杯のまま MAX_PAGES を使い切った＝安全上限での打ち切り（残りを落としている）
+    // 区別せずに break すると (b) が無言のデータ欠落になり、集計値が理由なくずれる。
     if (items.length < PAGE_SIZE) break;
+    if (page === MAX_PAGES) truncated = true;
   }
-  return rows;
+  return { rows, truncated };
 }
 
 /** 対象会社の X insight を列挙し DB 行へ整形する。ページング仕様は collectInsightPages 参照。 */
 export async function getInsights(
   session: SearchlightSession,
   now: number = Date.now(),
-): Promise<SearchlightInsightRow[]> {
+): Promise<InsightPage<SearchlightInsightRow>> {
   return collectInsightPages(session, "x", (raw) => toBadgeRow(raw, now));
 }
 
@@ -287,7 +298,7 @@ export async function getCrossInsightsFor(
   session: SearchlightSession,
   platform: CrossPlatform,
   now: number = Date.now(),
-): Promise<CrossPostRow[]> {
+): Promise<InsightPage<CrossPostRow>> {
   return collectInsightPages(session, platform, (raw) => toCrossRow(raw, now));
 }
 
