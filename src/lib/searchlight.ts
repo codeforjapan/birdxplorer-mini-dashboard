@@ -1,4 +1,5 @@
 import { searchlightEnv } from "./env";
+import type { SearchlightSession } from "./searchlight-http";
 
 /**
  * DB 行の形。migrations/002_searchlight.sql + 003_searchlight_stance_nullable.sql と一致させる。
@@ -124,7 +125,8 @@ export function toBadgeRow(raw: unknown, now: number): SearchlightInsightRow | n
   };
 }
 
-const CROSS_PLATFORMS = ["youtube", "tiktok", "threads", "web"] as const;
+export const CROSS_PLATFORMS = ["youtube", "tiktok", "threads", "web"] as const;
+export type CrossPlatform = (typeof CROSS_PLATFORMS)[number];
 
 /** 非X insight の DB 行（searchlight_cross_posts と一致）。 */
 export type CrossPostRow = {
@@ -208,26 +210,6 @@ export function toCrossRow(raw: unknown, now: number): CrossPostRow | null {
   };
 }
 
-/** OAuth2 client_credentials でアクセストークンを取得する。 */
-async function getToken(): Promise<string> {
-  const cfg = searchlightEnv();
-  const res = await fetch(`${cfg.SEARCHLIGHT_BASE_URL}/oauth/token`, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "client_credentials",
-      client_id: cfg.SEARCHLIGHT_CLIENT_ID,
-      client_secret: cfg.SEARCHLIGHT_CLIENT_SECRET,
-    }),
-  });
-  if (!res.ok) throw new Error(`Searchlight token 取得失敗: ${res.status}`);
-  const body: unknown = await res.json();
-  if (!isRecord(body) || typeof body.access_token !== "string") {
-    throw new Error("Searchlight token レスポンスが不正");
-  }
-  return body.access_token;
-}
-
 /**
  * レスポンス外枠から insight 配列を取り出す。
  * 実 API は bare 配列だが、将来の互換変更に備えて `{items:[]}` / `{insights:[]}` / `{data:[]}`
@@ -248,63 +230,65 @@ const PAGE_SIZE = 100;
 const MAX_PAGES = 50;
 
 /**
- * 対象会社の X insight を列挙し DB 行へ整形する。
- * 実 API 裏取り済み: insights は会社スコープ（`/companies/{id}/insights`）で、トピック直下ではない。
+ * insights を platform で絞ってページングし、map が返した行だけを集める。
+ * getInsights と getCrossInsightsFor でループが完全に同一だったため共通化した。
+ * ページング仕様（limit=100・1-based・返却が上限未満で終了）は変えていない。
  *
+ * 実 API 裏取り済み: insights は会社スコープ（`/companies/{id}/insights`）で、トピック直下ではない。
  * ページング必須: デフォルト limit だと先頭ページ（実測10件）しか取れず、会社に56件あっても
  * ノートと重なる insight を取りこぼしてバッジが付かなかった実例がある。limit=100 で
  * 1-based page を、返る件数が1ページ上限未満（＝最終ページ）になるまで順に辿る。
  * 実測: page は 1-based で連続ページが重複なく別データを返し、範囲外 page は 4xx ではなく
  * 空配列を返す（＝最終ページ判定が効き、余分な1リクエストでも throw しない）。
+ *
+ * 呼び出し回数の上限は session の予算が握る（searchlight-http.ts 参照）。
  */
-export async function getInsights(now: number = Date.now()): Promise<SearchlightInsightRow[]> {
+async function collectInsightPages<T>(
+  session: SearchlightSession,
+  platform: string,
+  map: (raw: unknown) => T | null,
+): Promise<T[]> {
   const cfg = searchlightEnv();
-  const token = await getToken();
-  const rows: SearchlightInsightRow[] = [];
+  const rows: T[] = [];
   for (let page = 1; page <= MAX_PAGES; page++) {
-    const res = await fetch(
-      `${cfg.SEARCHLIGHT_BASE_URL}/companies/${cfg.SEARCHLIGHT_COMPANY_ID}/insights?platform=x&limit=${PAGE_SIZE}&page=${page}`,
-      { headers: { authorization: `Bearer ${token}` } },
+    const body = await session.getJson(
+      `/companies/${cfg.SEARCHLIGHT_COMPANY_ID}/insights?platform=${platform}&limit=${PAGE_SIZE}&page=${page}`,
     );
-    if (!res.ok) throw new Error(`Searchlight insights 取得失敗: ${res.status}`);
-    const body: unknown = await res.json();
     const items = extractItems(body);
     for (const raw of items) {
-      const row = toBadgeRow(raw, now);
+      const row = map(raw);
       if (row) rows.push(row);
     }
-    // 最終ページ（1ページ上限未満）に達したら停止。
     if (items.length < PAGE_SIZE) break;
   }
   return rows;
 }
 
+/** 対象会社の X insight を列挙し DB 行へ整形する。ページング仕様は collectInsightPages 参照。 */
+export async function getInsights(
+  session: SearchlightSession,
+  now: number = Date.now(),
+): Promise<SearchlightInsightRow[]> {
+  return collectInsightPages(session, "x", (raw) => toBadgeRow(raw, now));
+}
+
 /**
- * youtube/tiktok/threads/web の insight を列挙して DB 行へ整形する。
+ * 1プラットフォーム分の非X insight を列挙して DB 行へ整形する。
+ *
+ * PF 単位に分けているのは、呼び出し側が「1PF取得 → upsert」を繰り返せるようにするため。
+ * 4PF・数千件を全部メモリに集めてから最後に1回 upsert すると、途中でタイムアウトしたときに
+ * 進捗がゼロになる（cron/ingest/route.ts の注意書きと同じ問題）。分割すれば失うのは最大1PF分で、
+ * upsert は insight_id 冪等なので次回実行で収束する。
+ *
  * topic 絞りは不要（会社の insight は全件 custom トピック由来。加えて toCrossRow の
- * payload 検証で非custom は自然に除外される。実 API で検証済み）。ページングは getInsights と同一。
+ * payload 検証で非custom は自然に除外される。実 API で検証済み）。
  */
-export async function getCrossInsights(now: number = Date.now()): Promise<CrossPostRow[]> {
-  const cfg = searchlightEnv();
-  const token = await getToken();
-  const rows: CrossPostRow[] = [];
-  for (const pf of CROSS_PLATFORMS) {
-    for (let page = 1; page <= MAX_PAGES; page++) {
-      const res = await fetch(
-        `${cfg.SEARCHLIGHT_BASE_URL}/companies/${cfg.SEARCHLIGHT_COMPANY_ID}/insights?platform=${pf}&limit=${PAGE_SIZE}&page=${page}`,
-        { headers: { authorization: `Bearer ${token}` } },
-      );
-      if (!res.ok) throw new Error(`Searchlight ${pf} insights 取得失敗: ${res.status}`);
-      const body: unknown = await res.json();
-      const items = extractItems(body);
-      for (const raw of items) {
-        const row = toCrossRow(raw, now);
-        if (row) rows.push(row);
-      }
-      if (items.length < PAGE_SIZE) break;
-    }
-  }
-  return rows;
+export async function getCrossInsightsFor(
+  session: SearchlightSession,
+  platform: CrossPlatform,
+  now: number = Date.now(),
+): Promise<CrossPostRow[]> {
+  return collectInsightPages(session, platform, (raw) => toCrossRow(raw, now));
 }
 
 /**
@@ -313,21 +297,15 @@ export async function getCrossInsights(now: number = Date.now()): Promise<CrossP
  * 無ければ何もせず 0 を返す。PUT は `TopicRequest` の部分更新で、body は `{collectionConfig}` だけ送る
  * （`transcriptionPrompt:null` を含めると 400 になるため）。返り値の topicsDisabled は実際に PUT した数。
  */
-export async function disableCollection(): Promise<{ topicsDisabled: number }> {
+export async function disableCollection(session: SearchlightSession): Promise<{ topicsDisabled: number }> {
   const cfg = searchlightEnv();
-  const token = await getToken();
-  const res = await fetch(`${cfg.SEARCHLIGHT_BASE_URL}/companies/${cfg.SEARCHLIGHT_COMPANY_ID}/topics`, {
-    headers: { authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) throw new Error(`Searchlight topics 取得失敗: ${res.status}`);
-  const plans = planCollectionShutdown(await res.json());
+  const plans = planCollectionShutdown(
+    await session.getJson(`/companies/${cfg.SEARCHLIGHT_COMPANY_ID}/topics`),
+  );
   for (const plan of plans) {
-    const put = await fetch(`${cfg.SEARCHLIGHT_BASE_URL}/companies/${cfg.SEARCHLIGHT_COMPANY_ID}/topics/${plan.topicId}`, {
-      method: "PUT",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify({ collectionConfig: plan.collectionConfig }),
+    await session.putJson(`/companies/${cfg.SEARCHLIGHT_COMPANY_ID}/topics/${plan.topicId}`, {
+      collectionConfig: plan.collectionConfig,
     });
-    if (!put.ok) throw new Error(`Searchlight collectionConfig 無効化失敗 (topic=${plan.topicId}): ${put.status}`);
   }
   return { topicsDisabled: plans.length };
 }

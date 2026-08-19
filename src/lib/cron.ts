@@ -13,6 +13,24 @@ import type { JobName, JobRun } from "./types";
  * （外部通知はなく、Vercel のランタイムログと KV が唯一の追跡手段）。
  */
 
+/**
+ * 同期の最小実行間隔。cron の設定が短く戻されても、外部APIを叩く回数がコード側で頭打ちになる。
+ * 24時間ではなく20時間にするのは、日次 cron の実行時刻が前後してもゲートに弾かれて
+ * 1日飛ぶことがないようにするため。
+ */
+export const MIN_SYNC_INTERVAL_MS = 20 * 60 * 60 * 1000;
+
+/**
+ * 最後の試行から minIntervalMs 経っていないか。
+ *
+ * `ok` は見ない＝成功・失敗を問わず「最後の試行」から数える。「成功時のみ間隔を消費する」
+ * 設計だと、恒久的に失敗する状態（例: 認証切れ）と cron 頻度の巻き戻しが重なったとき、
+ * すべての実行がゲートを通過して外部APIを叩き続ける。それは 2026-08 の事故の再現である。
+ */
+export function isTooSoon(lastRun: JobRun | null, now: number, minIntervalMs: number): boolean {
+  return lastRun !== null && now - lastRun.finishedAt < minIntervalMs;
+}
+
 function isAuthorized(req: Request): boolean {
   const header = req.headers.get("authorization") ?? "";
   const expected = `Bearer ${cronSecret()}`;

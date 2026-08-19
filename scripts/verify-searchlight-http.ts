@@ -6,6 +6,7 @@
  * 実行: pnpm dlx tsx scripts/verify-searchlight-http.ts
  */
 import assert from "node:assert/strict";
+import { isTooSoon, MIN_SYNC_INTERVAL_MS } from "../src/lib/cron";
 import type { SearchlightEnv } from "../src/lib/env";
 import {
   createSession,
@@ -13,6 +14,7 @@ import {
   retryDelayMs,
   SearchlightBudgetExceededError,
 } from "../src/lib/searchlight-http";
+import type { JobRun } from "../src/lib/types";
 
 const ENV: SearchlightEnv = {
   SEARCHLIGHT_BASE_URL: "https://example.test/api/v1",
@@ -152,6 +154,34 @@ const checks: [string, () => Promise<void> | void][] = [
       await s.putJson("/t", { a: 1 });
       assert.equal(s.requestCount, 2);
       assert.ok(urls[1].startsWith("https://example.test/api/v1/t"));
+    },
+  ],
+  [
+    "9: 間隔ゲートは最後の試行から数える（成否を問わない）",
+    () => {
+      const now = 1_000_000_000_000;
+      const run = (ok: boolean, finishedAt: number): JobRun => ({
+        job: "searchlight-sync",
+        startedAt: finishedAt - 1000,
+        finishedAt,
+        ok,
+        stats: {},
+        error: null,
+      });
+      const h = (n: number) => n * 60 * 60 * 1000;
+      assert.equal(isTooSoon(null, now, MIN_SYNC_INTERVAL_MS), false, "記録が無ければ実行する");
+      assert.equal(isTooSoon(run(true, now - h(2)), now, MIN_SYNC_INTERVAL_MS), true);
+      assert.equal(isTooSoon(run(true, now - h(21)), now, MIN_SYNC_INTERVAL_MS), false);
+      // ok=false でも間隔を消費する。恒久的な失敗と cron 頻度の巻き戻しが重なったときに
+      // 48回すべてが通過して事故が再現するのを防ぐため。
+      assert.equal(isTooSoon(run(false, now - h(2)), now, MIN_SYNC_INTERVAL_MS), true);
+      assert.equal(isTooSoon(run(false, now - h(21)), now, MIN_SYNC_INTERVAL_MS), false);
+    },
+  ],
+  [
+    "10: 間隔は20時間（24時間だと日次 cron が1日飛ぶ）",
+    () => {
+      assert.equal(MIN_SYNC_INTERVAL_MS, 20 * 60 * 60 * 1000);
     },
   ],
 ];
