@@ -30,7 +30,7 @@ export function DetailPanel({
         <ul className="mt-4 flex flex-col gap-2.5">
           {notes.map((note) => (
             <li key={note.noteId} className="flex flex-col gap-1">
-              <div className="flex items-start gap-2.5">
+              <div className="flex flex-wrap items-start gap-2.5 sm:flex-nowrap">
                 <span className="tabular w-10 shrink-0 pt-0.5 text-[11px] text-label">
                   {hhmm(note.createdAt)}
                 </span>
@@ -67,7 +67,16 @@ export function DetailPanel({
                     </span>
                   )}
                 </span>
-                <p className="min-w-0 flex-1 text-[13px] leading-[1.7] text-body">{note.summary}</p>
+                {/*
+                  スマホ幅では時刻・バッジ等の shrink-0 要素が幅を固定的に消費するため、
+                  本文を通常の flex-1 のまま同じ行に収めようとすると本文の描画幅だけが
+                  極端に狭くなり、折り返し行数が増えて縦に間延びする。
+                  flex-[0_0_100%] で本文を行全体の幅に強制し、親の flex-wrap と組み合わせて
+                  本文だけを独立した行に折り返す(デスクトップは3カラム横並びのまま変更しない)。
+                */}
+                <p className="min-w-0 flex-[0_0_100%] text-[13px] leading-[1.7] text-body sm:flex-1">
+                  {note.summary}
+                </p>
                 {note.searchlight && (
                   <span className="shrink-0 pt-0.5">
                     <SearchlightBadges badge={note.searchlight} />
