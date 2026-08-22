@@ -1,5 +1,6 @@
 import { hhmm, mmdd } from "@/lib/time";
 import { statusLabel, type ViewNote } from "@/lib/view";
+import { Linkified } from "./Linkified";
 import { SearchlightBadges } from "./SearchlightBadges";
 
 /**
@@ -74,8 +75,8 @@ export function DetailPanel({
                   flex-[0_0_100%] で本文を行全体の幅に強制し、親の flex-wrap と組み合わせて
                   本文だけを独立した行に折り返す(デスクトップは3カラム横並びのまま変更しない)。
                 */}
-                <p className="min-w-0 flex-[0_0_100%] text-[13px] leading-[1.7] text-body sm:flex-1">
-                  {note.summary}
+                <p className="min-w-0 flex-[0_0_100%] break-words text-[13px] leading-[1.7] text-body sm:flex-1">
+                  <Linkified text={note.summary} />
                 </p>
                 {note.searchlight && (
                   <span className="shrink-0 pt-0.5">
