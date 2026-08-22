@@ -60,7 +60,11 @@ function groupByCluster(notes: readonly ViewNote[]): ClusterGroup[] {
   // 比較結果が異なりうる。1件だけのクラスタが多数並ぶこの一覧では順序が入れ替わり、
   // 「server rendered text didn't match」のハイドレーション不一致を引き起こす。
   // コードポイント順の素朴な比較は環境に依存しない。
-  list.sort((a, b) => b.notes.length - a.notes.length || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  list.sort(
+    (a, b) =>
+      b.notes.length - a.notes.length ||
+      (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+  );
   return list;
 }
 
@@ -69,10 +73,14 @@ export function ClusterNoteList({ notes }: { notes: ViewNote[] }) {
 
   return (
     <section className="rounded-xl border border-line bg-card p-4 sm:p-5">
-      <h2 className="text-[14px] font-semibold text-heading">クラスタ別Note一覧</h2>
+      <h2 className="text-[14px] font-semibold text-heading">
+        クラスタ別Note一覧
+      </h2>
 
       {groups.length === 0 ? (
-        <p className="mt-4 text-[13px] text-label">該当するNoteはありません。</p>
+        <p className="mt-4 text-[13px] text-label">
+          該当するNoteはありません。
+        </p>
       ) : (
         <ul className="mt-3 flex flex-col gap-1">
           {groups.map((g) => (
@@ -94,8 +102,12 @@ export function ClusterNoteList({ notes }: { notes: ViewNote[] }) {
                     className="inline-block size-2.5 shrink-0 rounded-full"
                     style={{ backgroundColor: g.color }}
                   />
-                  <span className="min-w-0 flex-1 truncate text-[13px] text-body">{g.name}</span>
-                  <span className="tabular shrink-0 text-[11px] text-label">{g.notes.length}件</span>
+                  <span className="min-w-0 flex-1 truncate text-[13px] text-body">
+                    {g.name}
+                  </span>
+                  <span className="tabular shrink-0 text-[11px] text-label">
+                    {g.notes.length}件
+                  </span>
                 </summary>
 
                 {g.notes.length === 0 ? (
@@ -105,9 +117,17 @@ export function ClusterNoteList({ notes }: { notes: ViewNote[] }) {
                 ) : (
                   <ul className="mt-1 mb-3 flex flex-col gap-1 pl-[18px]">
                     {g.notes.map((note) => (
-                      <li key={note.noteId} className="flex flex-col gap-1">
-                        <div className="flex items-start gap-2.5">
-                          <span className="tabular w-[76px] shrink-0 pt-0.5 text-[11px] text-label">
+                      <li
+                        key={note.noteId}
+                        className="flex flex-col gap-0.5 lg:gap-1 py-1.5 lg:py-1"
+                      >
+                        {/*
+                          横一列(sm以上)だと時刻・バッジ等が幅を固定的に消費し、本文の
+                          描画幅が狭まって読みづらくなる。スマホでは時刻・本文・
+                          「Xで見る」を縦に並べ、sm以上でのみ横並びに戻す。
+                        */}
+                        <div className="flex flex-col items-start gap-1 sm:flex-row sm:gap-2.5">
+                          <span className="tabular w-[76px] shrink-0 text-[11px] text-label sm:pt-0.5">
                             {mmddhhmm(note.createdAt)}
                           </span>
                           {/*
@@ -116,15 +136,15 @@ export function ClusterNoteList({ notes }: { notes: ViewNote[] }) {
                             ものだと一目でわからないため、明示の「除外」ラベルを併記する。
                           */}
                           {note.adminInfo && (
-                            <span className="tabular mt-0.5 shrink-0 rounded bg-block px-1.5 py-0.5 text-[10px] text-weak">
+                            <span className="tabular shrink-0 rounded bg-block px-1.5 py-0.5 text-[10px] text-weak sm:mt-0.5">
                               除外
                             </span>
                           )}
-                          <p className="min-w-0 flex-1 text-[13px] leading-[1.7] text-body">
+                          <p className="w-full min-w-0 text-[13px] leading-[1.7] text-body sm:w-auto sm:flex-1">
                             {note.summary}
                           </p>
                           {note.searchlight && (
-                            <span className="shrink-0 pt-0.5">
+                            <span className="shrink-0 sm:pt-0.5">
                               <SearchlightBadges badge={note.searchlight} />
                             </span>
                           )}
@@ -132,7 +152,7 @@ export function ClusterNoteList({ notes }: { notes: ViewNote[] }) {
                             href={note.postUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="shrink-0 pt-0.5 text-[11px] text-label transition-colors hover:text-body"
+                            className="shrink-0 text-[11px] text-label transition-colors hover:text-body sm:pt-0.5"
                             style={{ transitionDuration: "150ms" }}
                           >
                             Xで見る
@@ -143,8 +163,10 @@ export function ClusterNoteList({ notes }: { notes: ViewNote[] }) {
                           満たす行。本文相当の情報のため text-weak(#4B5563, 対白7.56:1)を使う。
                         */}
                         {note.adminInfo && (
-                          <p className="pl-[86px] text-[11px] leading-[1.5] text-weak">
-                            <span className="tabular">スコア {note.adminInfo.relevance}</span>
+                          <p className="pl-0 text-[11px] leading-[1.5] text-weak sm:pl-[86px]">
+                            <span className="tabular">
+                              スコア {note.adminInfo.relevance}
+                            </span>
                             {note.adminInfo.excludeReason && (
                               <span> ・ {note.adminInfo.excludeReason}</span>
                             )}
