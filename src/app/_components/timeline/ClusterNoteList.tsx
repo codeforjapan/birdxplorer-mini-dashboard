@@ -1,5 +1,6 @@
 import { mmddhhmm } from "@/lib/time";
 import type { ViewNote } from "@/lib/view";
+import { Linkified } from "./Linkified";
 import { SearchlightBadges } from "./SearchlightBadges";
 
 /**
@@ -140,8 +141,8 @@ export function ClusterNoteList({ notes }: { notes: ViewNote[] }) {
                               除外
                             </span>
                           )}
-                          <p className="w-full min-w-0 text-[13px] leading-[1.7] text-body sm:w-auto sm:flex-1">
-                            {note.summary}
+                          <p className="w-full min-w-0 break-words text-[13px] leading-[1.7] text-body sm:w-auto sm:flex-1">
+                            <Linkified text={note.summary} />
                           </p>
                           {note.searchlight && (
                             <span className="shrink-0 sm:pt-0.5">
