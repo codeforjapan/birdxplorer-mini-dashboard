@@ -1,4 +1,5 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { CrossPostRow, SearchlightInsightRow } from "./searchlight";
 import type { Cluster, JobRun, Note } from "./types";
 import type { TenantSettings } from "./tenant/types";
 
@@ -56,15 +57,55 @@ const note = (over: Partial<Note>): Note => ({
   ...over,
 });
 
-// 実 DB が要る。TEST_DATABASE_URL（使い捨ての空 DB）がある時だけ走らせる。
+const insight = (over: Partial<SearchlightInsightRow>): SearchlightInsightRow => ({
+  tweet_id: "t1",
+  stance: "SPREADING",
+  urgency: "HIGH",
+  claim_type: "RUMOR_OR_UNVERIFIED",
+  official_source_relationship: "conflicts_with_official_source",
+  official_source_url: null,
+  synced_at: 1_000,
+  ...over,
+});
+
+const crossPost = (over: Partial<CrossPostRow>): CrossPostRow => ({
+  insight_id: "i1",
+  platform: "youtube",
+  url: "https://www.youtube.com/watch?v=x",
+  stance: null,
+  urgency: "LOW",
+  claim_type: "RUMOR_OR_UNVERIFIED",
+  official_source_relationship: "no_official_source",
+  official_source_url: null,
+  claim_summary: "要約",
+  published_at: null,
+  synced_at: 1_000,
+  views: null,
+  likes: null,
+  comments: null,
+  shares: null,
+  collects: null,
+  flame_rate: null,
+  ...over,
+});
+
+// neon() は Neon の HTTP エンドポイントにしか話せないので、素の Postgres へ繋ぐアダプタに差し替える
+// （db.ts の sql()・migrate() は実物のまま動かす）
+vi.mock("@neondatabase/serverless", async () => {
+  const { createPgSql } = await import("@/test/pg-sql");
+  return { neon: (url: string) => createPgSql(url) };
+});
+
+// 実 DB が要る。TEST_DATABASE_URL（使い捨ての空 Postgres）がある時だけ走らせる。
 describe.skipIf(!process.env.TEST_DATABASE_URL)("事例間のデータ分離（実 DB）", () => {
   let store: typeof import("./store");
   let state: typeof import("./state");
+  let db: typeof import("./db");
 
   beforeAll(async () => {
     process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
     process.env.BLOB_READ_WRITE_TOKEN ??= "test";
-    const db = await import("./db");
+    db = await import("./db");
     const repo = await import("./tenant/repo");
     await db.migrate();
     // tenant_id は tenants(slug) への外部キーなので、先に事例を作る
@@ -79,6 +120,27 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("事例間のデータ分離（�
     }
     store = await import("./store");
     state = await import("./state");
+  });
+
+  // 実行順や前回の実行の残りに結果が左右されないよう、iso-* の行を毎回消してから始める。
+  // notes は clusters を外部キーで参照するので先に消す
+  beforeEach(async () => {
+    for (const table of [
+      "notes",
+      "clusters",
+      "retry_queue",
+      "job_runs",
+      "app_state",
+      "searchlight_insights",
+      "searchlight_cross_posts",
+    ]) {
+      await db.sql().query(`delete from ${table} where tenant_id like 'iso-%'`);
+    }
+  });
+
+  afterAll(async () => {
+    const { closePgPools } = await import("@/test/pg-sql");
+    await closePgPools();
   });
 
   it("同じ note_id・cluster_id でも事例ごとに独立して保存される", async () => {
@@ -101,6 +163,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("事例間のデータ分離（�
   });
 
   it("applyStatusRefresh は他の事例の行を更新しない", async () => {
+    await store.upsertNotes("iso-a", [note({})]);
+    await store.upsertNotes("iso-b", [note({})]);
     await store.applyStatusRefresh(
       "iso-a",
       [{ noteId: "n1", currentStatus: "CURRENTLY_RATED_HELPFUL", helpfulCount: 9, notHelpfulCount: 0, rateCount: 9 }],
@@ -137,5 +201,30 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("事例間のデータ分離（�
     await state.recordRun("iso-a", run);
     expect((await state.getRun("iso-a", "ingest"))?.ok).toBe(true);
     expect(await state.getRun("iso-b", "ingest")).toBeNull();
+  });
+
+  it("同じ tweet_id・insight_id の Searchlight 行も事例ごとに独立して保存される", async () => {
+    await store.upsertSearchlightInsights("iso-a", [insight({ urgency: "HIGH" })]);
+    await store.upsertSearchlightInsights("iso-b", [insight({ urgency: "LOW", stance: null })]);
+    await store.upsertCrossPosts("iso-a", [crossPost({ claim_summary: "A の要約", views: 10 })]);
+    await store.upsertCrossPosts("iso-b", [crossPost({ claim_summary: "B の要約", views: 20 })]);
+    // b の再 upsert が a の行を上書きしないことも見る
+    await store.upsertSearchlightInsights("iso-b", [insight({ urgency: "MEDIUM", stance: null })]);
+
+    const insights = await db.sql()`
+      select tenant_id, urgency, stance from searchlight_insights
+      where tenant_id like 'iso-%' and tweet_id = 't1' order by tenant_id`;
+    expect(insights).toEqual([
+      { tenant_id: "iso-a", urgency: "HIGH", stance: "SPREADING" },
+      { tenant_id: "iso-b", urgency: "MEDIUM", stance: null },
+    ]);
+
+    const cross = await db.sql()`
+      select tenant_id, claim_summary, views::int as views from searchlight_cross_posts
+      where tenant_id like 'iso-%' and insight_id = 'i1' order by tenant_id`;
+    expect(cross).toEqual([
+      { tenant_id: "iso-a", claim_summary: "A の要約", views: 10 },
+      { tenant_id: "iso-b", claim_summary: "B の要約", views: 20 },
+    ]);
   });
 });

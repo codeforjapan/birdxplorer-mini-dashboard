@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TenantRecord, TenantSettings } from "./types";
 
 const settings: TenantSettings = {
@@ -33,7 +33,14 @@ const rec: Omit<TenantRecord, "updatedAt" | "searchlightStoppedAt"> = {
   overrides: { binMinutes: 30 },
 };
 
-// 実 DB が要る。TEST_DATABASE_URL（Neon のテスト用ブランチ等、使い捨ての空 DB）がある時だけ走らせる。
+// neon() は Neon の HTTP エンドポイントにしか話せないので、素の Postgres へ繋ぐアダプタに差し替える
+// （db.ts の sql()・migrate() は実物のまま動かす）
+vi.mock("@neondatabase/serverless", async () => {
+  const { createPgSql } = await import("@/test/pg-sql");
+  return { neon: (url: string) => createPgSql(url) };
+});
+
+// 実 DB が要る。TEST_DATABASE_URL（使い捨ての空 Postgres）がある時だけ走らせる。
 // 本番の DATABASE_URL を誤って叩かないよう、DATABASE_URL はこの値で上書きする。
 describe.skipIf(!process.env.TEST_DATABASE_URL)("tenant repo（実 DB）", () => {
   let repo: typeof import("./repo");
@@ -46,6 +53,16 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("tenant repo（実 DB）", () =>
     db = await import("../db");
     repo = await import("./repo");
     await db.migrate();
+  });
+
+  // 前回の実行や他のテストが残した searchlight_stopped_at に結果が左右されないよう、毎回消してから始める
+  beforeEach(async () => {
+    await db.sql()`delete from tenants where slug = 'repo-test'`;
+  });
+
+  afterAll(async () => {
+    const { closePgPools } = await import("@/test/pg-sql");
+    await closePgPools();
   });
 
   it("upsertTenant → getTenant で往復一致する", async () => {
