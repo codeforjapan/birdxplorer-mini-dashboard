@@ -18,6 +18,16 @@ export type SearchlightBadge = {
   officialUrl: string | null;
 };
 
+/**
+ * binary 方式（選挙型）の判定を `notes.relevance`（integer 列）に落とすときの値。
+ *
+ * 判定自体は related / unrelated の二値で閾値は無い。列を boolean に作り替えず integer のまま
+ * 両端の値だけを使っているのは、運用中のテーブルへの破壊的マイグレーションを避けるため。
+ * この方式の事例では列に情報は無く、判定結果は `excluded` を見れば足りる。
+ */
+export const RELEVANCE_RELATED = 100;
+export const RELEVANCE_UNRELATED = 0;
+
 export type NoteStatus =
   | "NEEDS_MORE_RATINGS"
   | "CURRENTLY_RATED_HELPFUL"
@@ -48,9 +58,9 @@ export type Note = {
   statusRefreshedAt: number;
 
   // ── 分類結果 ──
-  /** 0-100 */
+  /** score 方式は 0-100。binary 方式は RELEVANCE_RELATED / RELEVANCE_UNRELATED のみ。 */
   relevance: number;
-  /** relevance < RELEVANCE_THRESHOLD */
+  /** score 方式は relevance < cfg.relevanceThreshold、binary 方式は unrelated 判定 */
   excluded: boolean;
   excludeReason: string | null;
   clusterId: string | null;
