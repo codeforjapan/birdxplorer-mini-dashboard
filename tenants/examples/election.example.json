@@ -8,8 +8,8 @@
     "siteDescription": "2026年沖縄県知事選挙（8月27日告示・9月13日投開票）をめぐってXで流通した情報に付いたコミュニティノートを継続収集し、内容ごとに分類して時系列で可視化する観測サイト。",
     "eyebrowLabel": "BirdXplorer コミュニティノート観測",
     "scheduleLabel": "2026年8月27日告示 ・ 9月13日投開票",
-    "monitorStartAt": 1787151600000,
-    "monitorEndDate": "2026-09-30",
+    "monitorStartAt": 1785510000000,
+    "monitorEndDate": "2026-09-20",
     "searchKeywords": [
       "沖縄",
       "辺野古",
