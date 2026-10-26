@@ -40,8 +40,18 @@ describe("buildRelevanceSystemPrompt", () => {
     const p = buildRelevanceSystemPrompt(cfg);
     expect(p).toContain(cfg.llmContextPhrase);
     expect(p).toContain(cfg.taxonomy.relevantExamples);
-    expect(p).toContain("60");
+    expect(p).toContain("60以上");
+    expect(p).toContain("60未満");
     expect(p).not.toContain("verdict");
+  });
+
+  it("災害型(score): 閾値を上書きするとプロンプトの境界値も変わる", () => {
+    const cfg = resolveTenantConfig({ type: "disaster", status: "active", settings: S, overrides: { relevanceThreshold: 70 } });
+    const p = buildRelevanceSystemPrompt(cfg);
+    expect(p).toContain("70以上");
+    expect(p).toContain("70未満");
+    expect(p).not.toContain("60以上");
+    expect(p).not.toContain("60未満");
   });
 
   it("選挙型(binary): related/unrelated の二値で、スコア閾値の説明を含まない", () => {

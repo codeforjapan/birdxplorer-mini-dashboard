@@ -54,10 +54,10 @@ function buildScorePrompt(cfg: TenantConfig): string {
 判断すべきは「今回の${short}に関係するか、それとも無関係な話題にたまたま
 キーワードが入っただけか」の一点です。
 
-高いスコア（60以上）にするもの — 今回の${short}に少しでも関係するノートすべて。例:
+高いスコア（${cfg.relevanceThreshold}以上）にするもの — 今回の${short}に少しでも関係するノートすべて。例:
 ${taxonomy.relevantExamples}
 
-低いスコア（60未満）にするもの — 今回の${short}と【明確に無関係】で、たまたま
+低いスコア（${cfg.relevanceThreshold}未満）にするもの — 今回の${short}と【明確に無関係】で、たまたま
 ${taxonomy.searchTermExamples}等の語を含むだけのもの。例:
 ${taxonomy.irrelevantExamples}
 
