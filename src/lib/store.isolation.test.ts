@@ -114,8 +114,9 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("事例間のデータ分離（�
   it("filterUnseen は自分の事例の既知 note_id だけを除く", async () => {
     await store.upsertNotes("iso-a", [note({ noteId: "n1" })]);
     expect(await state.filterUnseen("iso-a", ["n1", "n2"])).toEqual(["n2"]);
-    // 登録の無い事例からは、他の事例の n1 は「既知」に見えない
-    expect(await state.filterUnseen("iso-b", ["n9"])).toEqual(["n9"]);
+    // n1 は iso-a・iso-b に存在するが、データの無い iso-c から見れば未処理のまま
+    // （filterUnseen は読み取りだけなので iso-c に tenants 行は要らない）
+    expect(await state.filterUnseen("iso-c", ["n1"])).toEqual(["n1"]);
   });
 
   it("再試行キューは事例ごとで、drain は他事例の行を取り出さない", async () => {
