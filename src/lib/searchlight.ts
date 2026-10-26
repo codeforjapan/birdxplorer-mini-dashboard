@@ -76,11 +76,12 @@ function asTopicConfig(v: unknown): TopicCollectionConfig | null {
  * collectionConfig.enabled と全 PF の enabled を false に落とすだけ（web の mrd 等は現状維持＝
  * ①で踏んだ "web は metadata refresh 非対応" 400 を避ける）。何も有効でなければ空配列（完全 no-op）。
  */
-export function planCollectionShutdown(topicsRaw: unknown): ShutdownPlan[] {
+export function planCollectionShutdown(topicsRaw: unknown, topicId: string): ShutdownPlan[] {
   const topics = extractItems(topicsRaw);
   const plans: ShutdownPlan[] = [];
   for (const t of topics) {
-    if (!isRecord(t) || typeof t.id !== "string") continue;
+    // 会社には複数事例のトピックが同居するため、指定トピック以外は止めない。
+    if (!isRecord(t) || t.id !== topicId) continue;
     const cc = asTopicConfig(t.collectionConfig);
     if (!cc) continue;
     const anyEnabled = cc.enabled || cc.platforms.some((p) => p.enabled === true);
@@ -250,6 +251,7 @@ export type InsightPage<T> = { rows: T[]; truncated: boolean };
  */
 async function collectInsightPages<T>(
   session: SearchlightSession,
+  topicId: string,
   platform: string,
   map: (raw: unknown) => T | null,
 ): Promise<InsightPage<T>> {
@@ -258,7 +260,7 @@ async function collectInsightPages<T>(
   let truncated = false;
   for (let page = 1; page <= MAX_PAGES; page++) {
     const body = await session.getJson(
-      `/companies/${cfg.SEARCHLIGHT_COMPANY_ID}/insights?platform=${platform}&limit=${PAGE_SIZE}&page=${page}`,
+      `/companies/${cfg.SEARCHLIGHT_COMPANY_ID}/insights?platform=${platform}&topic_id=${encodeURIComponent(topicId)}&limit=${PAGE_SIZE}&page=${page}`,
     );
     const items = extractItems(body);
     for (const raw of items) {
@@ -278,9 +280,10 @@ async function collectInsightPages<T>(
 /** 対象会社の X insight を列挙し DB 行へ整形する。ページング仕様は collectInsightPages 参照。 */
 export async function getInsights(
   session: SearchlightSession,
+  topicId: string,
   now: number = Date.now(),
 ): Promise<InsightPage<SearchlightInsightRow>> {
-  return collectInsightPages(session, "x", (raw) => toBadgeRow(raw, now));
+  return collectInsightPages(session, topicId, "x", (raw) => toBadgeRow(raw, now));
 }
 
 /**
@@ -291,27 +294,30 @@ export async function getInsights(
  * 進捗がゼロになる（cron/ingest/route.ts の注意書きと同じ問題）。分割すれば失うのは最大1PF分で、
  * upsert は insight_id 冪等なので次回実行で収束する。
  *
- * topic 絞りは不要（会社の insight は全件 custom トピック由来。加えて toCrossRow の
- * payload 検証で非custom は自然に除外される。実 API で検証済み）。
+ * insights は会社スコープなので、複数事例が同居しても混ざらないよう topic_id で絞る。
  */
 export async function getCrossInsightsFor(
   session: SearchlightSession,
+  topicId: string,
   platform: CrossPlatform,
   now: number = Date.now(),
 ): Promise<InsightPage<CrossPostRow>> {
-  return collectInsightPages(session, platform, (raw) => toCrossRow(raw, now));
+  return collectInsightPages(session, topicId, platform, (raw) => toCrossRow(raw, now));
 }
 
 /**
  * 会社の収集を停止する（アーカイブ時）。有効なトピックの collectionConfig を無効化 PUT する。
- * 特定トピックIDは不要（`planCollectionShutdown` が有効トピックを見つける）。冪等＝有効トピックが
- * 無ければ何もせず 0 を返す。PUT は `TopicRequest` の部分更新で、body は `{collectionConfig}` だけ送る
+ * 指定 topic だけを止める（他事例のトピックは触らない）。冪等＝有効でなければ何もせず 0 を返す。PUT は `TopicRequest` の部分更新で、body は `{collectionConfig}` だけ送る
  * （`transcriptionPrompt:null` を含めると 400 になるため）。返り値の topicsDisabled は実際に PUT した数。
  */
-export async function disableCollection(session: SearchlightSession): Promise<{ topicsDisabled: number }> {
+export async function disableCollection(
+  session: SearchlightSession,
+  topicId: string,
+): Promise<{ topicsDisabled: number }> {
   const cfg = searchlightEnv();
   const plans = planCollectionShutdown(
     await session.getJson(`/companies/${cfg.SEARCHLIGHT_COMPANY_ID}/topics`),
+    topicId,
   );
   for (const plan of plans) {
     await session.putJson(`/companies/${cfg.SEARCHLIGHT_COMPANY_ID}/topics/${plan.topicId}`, {

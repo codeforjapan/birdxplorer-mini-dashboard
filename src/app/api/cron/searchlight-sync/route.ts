@@ -62,7 +62,7 @@ export async function GET(req: Request): Promise<Response> {
       // job_runs だけで無言のデータ欠落に気づける（ingest の stats.truncated と同じ形）。
       let truncated = 0;
 
-      const x = await getInsights(session, now);
+      const x = await getInsights(session, cfg.searchlightTopicId, now);
       await upsertSearchlightInsights(cfg.slug, x.rows);
       if (x.truncated) truncated++;
 
@@ -70,7 +70,7 @@ export async function GET(req: Request): Promise<Response> {
       // upsert は主キー冪等なので次回実行で収束する。
       let crossUpserted = 0;
       for (const platform of CROSS_PLATFORMS) {
-        const cross = await getCrossInsightsFor(session, platform, now);
+        const cross = await getCrossInsightsFor(session, cfg.searchlightTopicId, platform, now);
         await upsertCrossPosts(cfg.slug, cross.rows);
         crossUpserted += cross.rows.length;
         if (cross.truncated) truncated++;
