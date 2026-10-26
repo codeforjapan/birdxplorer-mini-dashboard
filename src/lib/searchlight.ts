@@ -51,8 +51,8 @@ function firstUrl(v: unknown): string | null {
 }
 
 // ── 収集停止（アーカイブ時）─────────────────────────────────
-// MONITOR_END_DATE を過ぎたら収集を止めるための純ロジック。特定トピックIDを知らずとも、
-// 「収集が有効なトピック」を列挙して無効化計画に落とす（会社の全イベントトピックが対象）。
+// 事例の監視終了後に収集を止めるための純ロジック。会社には複数事例のトピックが同居するため、
+// 対象は終了した事例の topic ID に一致するトピックだけで、他の事例のトピックは止めない。
 
 type PlatformCollectionConfig = { enabled?: boolean; [k: string]: unknown };
 type TopicCollectionConfig = { enabled: boolean; platforms: PlatformCollectionConfig[]; [k: string]: unknown };
@@ -71,7 +71,7 @@ function asTopicConfig(v: unknown): TopicCollectionConfig | null {
 }
 
 /**
- * トピック一覧（`GET /companies/{co}/topics` の生レスポンス）から、収集が有効なトピックだけを
+ * トピック一覧（`GET /companies/{co}/topics` の生レスポンス）から、指定トピックのうち収集が有効なものだけを
  * 「無効化 PUT 計画」に変換する純関数。トピック本体 enabled やその他フィールドは触らず、
  * collectionConfig.enabled と全 PF の enabled を false に落とすだけ（web の mrd 等は現状維持＝
  * ①で踏んだ "web は metadata refresh 非対応" 400 を避ける）。何も有効でなければ空配列（完全 no-op）。

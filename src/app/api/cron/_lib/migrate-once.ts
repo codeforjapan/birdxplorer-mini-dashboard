@@ -3,9 +3,8 @@ import { migrate } from "@/lib/db";
 /**
  * migrate() を、この Lambda インスタンスが生きている間の最初の1回だけ実行する。
  *
- * migrate() 自体は移行ファイルを "create ... if not exists" 前提の冪等な内容にしているため
- * 何度呼んでも安全だが（db.ts 冒頭コメント参照）、cron 実行のたびに migrations/*.sql を
- * 読み直して毎回 CREATE TABLE を投げるのは無駄なラウンドトリップになる。
+ * migrate() は適用済みの移行ファイルを schema_migrations に記録して1回しか流さないが
+ * （db.ts 参照）、記録の確認にも1往復かかる。cron 実行のたびに確認するのは無駄なので、
  * モジュールスコープの Promise でメモ化し、同一 Lambda 実行環境内のウォームリユース時は
  * 2回目以降ノーオペにする（db.ts の sql() のメモ化と同じ考え方）。
  *
