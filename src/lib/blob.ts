@@ -92,13 +92,17 @@ export async function readText(pathname: string, opts?: ReadOptions): Promise<st
   return read(pathname, opts);
 }
 
-export async function writeJson(pathname: string, value: unknown): Promise<string> {
+export async function writeJson(
+  pathname: string,
+  value: unknown,
+  opts: { maxAgeSeconds?: number } = {},
+): Promise<string> {
   const { url } = await put(pathname, JSON.stringify(value), {
     access: "public",
     contentType: "application/json; charset=utf-8",
     addRandomSuffix: false,
     allowOverwrite: true,
-    cacheControlMaxAge: SNAPSHOT_MAX_AGE,
+    cacheControlMaxAge: opts.maxAgeSeconds ?? SNAPSHOT_MAX_AGE,
     token: token(),
   });
   return url;

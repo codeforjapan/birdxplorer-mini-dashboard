@@ -1,5 +1,5 @@
 import { fetchNoteStatuses } from "@/lib/birdxplorer";
-import { runCronJob } from "@/lib/cron";
+import { runTenantCronJob } from "@/lib/cron";
 import { sql } from "@/lib/db";
 import { applyStatusRefresh, publishSnapshot } from "@/lib/store";
 import { ensureMigrated } from "../_lib/migrate-once";
@@ -18,14 +18,15 @@ const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Vercel cron は GET で発火するため GET が本体（ingest/route.ts の同じ注記を参照）。 */
 export async function GET(req: Request): Promise<Response> {
-  return runCronJob("refresh-status", req, async () => {
+  return runTenantCronJob("refresh-status", req, async (cfg) => {
     await ensureMigrated();
 
     // 直近7日分のノートIDだけが要る。summary 等のフルマッピングは不要なので、
     // store.ts の readNotes()（全件・フル Note へのマッピング）は経由せず
     // note_id だけを直接クエリする。
     const since = Date.now() - SEVEN_DAYS_MS;
-    const rows = await sql()`select note_id from notes where created_at >= ${since}`;
+    const rows = await sql()`
+      select note_id from notes where tenant_id = ${cfg.slug} and created_at >= ${since}`;
     const noteIds = rows.map((r) => String(r.note_id));
 
     if (noteIds.length === 0) {
@@ -38,9 +39,9 @@ export async function GET(req: Request): Promise<Response> {
     // （docs/spec.md §9.1 #9）。分類結果（relevance / clusterId 等）はここでは一切触らない
     // — applyStatusRefresh が対象カラムを絞った UPDATE であることがその保証。
     const statuses = await fetchNoteStatuses(noteIds);
-    await applyStatusRefresh(statuses);
+    await applyStatusRefresh(cfg.slug, statuses);
 
-    await publishSnapshot();
+    await publishSnapshot(cfg);
 
     return { targeted: noteIds.length, refreshed: statuses.length };
   });
