@@ -74,14 +74,22 @@ function asTopicConfig(v: unknown): TopicCollectionConfig | null {
  * トピック一覧（`GET /companies/{co}/topics` の生レスポンス）から、指定トピックのうち収集が有効なものだけを
  * 「無効化 PUT 計画」に変換する純関数。トピック本体 enabled やその他フィールドは触らず、
  * collectionConfig.enabled と全 PF の enabled を false に落とすだけ（web の mrd 等は現状維持＝
- * ①で踏んだ "web は metadata refresh 非対応" 400 を避ける）。何も有効でなければ空配列（完全 no-op）。
+ * ①で踏んだ "web は metadata refresh 非対応" 400 を避ける）。何も有効でなければ plans は空（完全 no-op）。
+ *
+ * topicFound を分けて返すのは、「既に止まっている」と「一覧に無い」を呼び出し側が区別するため。
+ * topic ID の誤記で一覧に無いのに停止済みと記録すると、本物のトピックが課金され続けても二度と止めに行かない。
  */
-export function planCollectionShutdown(topicsRaw: unknown, topicId: string): ShutdownPlan[] {
+export function planCollectionShutdown(
+  topicsRaw: unknown,
+  topicId: string,
+): { topicFound: boolean; plans: ShutdownPlan[] } {
   const topics = extractItems(topicsRaw);
   const plans: ShutdownPlan[] = [];
+  let topicFound = false;
   for (const t of topics) {
     // 会社には複数事例のトピックが同居するため、指定トピック以外は止めない。
     if (!isRecord(t) || t.id !== topicId) continue;
+    topicFound = true;
     const cc = asTopicConfig(t.collectionConfig);
     if (!cc) continue;
     const anyEnabled = cc.enabled || cc.platforms.some((p) => p.enabled === true);
@@ -91,7 +99,7 @@ export function planCollectionShutdown(topicsRaw: unknown, topicId: string): Shu
       collectionConfig: { ...cc, enabled: false, platforms: cc.platforms.map((p) => ({ ...p, enabled: false })) },
     });
   }
-  return plans;
+  return { topicFound, plans };
 }
 
 /**
@@ -306,16 +314,17 @@ export async function getCrossInsightsFor(
 }
 
 /**
- * 会社の収集を停止する（アーカイブ時）。有効なトピックの collectionConfig を無効化 PUT する。
- * 指定 topic だけを止める（他事例のトピックは触らない）。冪等＝有効でなければ何もせず 0 を返す。PUT は `TopicRequest` の部分更新で、body は `{collectionConfig}` だけ送る
- * （`transcriptionPrompt:null` を含めると 400 になるため）。返り値の topicsDisabled は実際に PUT した数。
+ * 指定 topic の収集を停止する（事例の終了時）。そのトピックの collectionConfig を無効化 PUT し、
+ * 同じ会社にある他事例のトピックは触らない。冪等＝有効でなければ何もせず 0 を返す。PUT は `TopicRequest` の部分更新で、body は `{collectionConfig}` だけ送る
+ * （`transcriptionPrompt:null` を含めると 400 になるため）。返り値の topicsDisabled は実際に PUT した数、
+ * topicFound は会社のトピック一覧に指定 topic があったか。
  */
 export async function disableCollection(
   session: SearchlightSession,
   topicId: string,
-): Promise<{ topicsDisabled: number }> {
+): Promise<{ topicFound: boolean; topicsDisabled: number }> {
   const cfg = searchlightEnv();
-  const plans = planCollectionShutdown(
+  const { topicFound, plans } = planCollectionShutdown(
     await session.getJson(`/companies/${cfg.SEARCHLIGHT_COMPANY_ID}/topics`),
     topicId,
   );
@@ -324,5 +333,5 @@ export async function disableCollection(
       collectionConfig: plan.collectionConfig,
     });
   }
-  return { topicsDisabled: plans.length };
+  return { topicFound, topicsDisabled: plans.length };
 }

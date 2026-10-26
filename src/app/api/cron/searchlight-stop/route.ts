@@ -22,7 +22,15 @@ export async function GET(req: Request): Promise<Response> {
     if (cfg.searchlightTopicId === null || !hasSearchlightConfig()) return { skipped: 1 };
 
     const session = createSession();
-    const { topicsDisabled } = await disableCollection(session, cfg.searchlightTopicId);
+    const { topicFound, topicsDisabled } = await disableCollection(session, cfg.searchlightTopicId);
+    if (!topicFound) {
+      // 停止済みと記録すると以後止めに行かなくなる。topic ID の誤記なら本物のトピックが課金され続けるので、
+      // 記録せずに毎日ここで叫び続ける
+      console.error(
+        `[searchlight-stop] ${cfg.slug}: topic ${cfg.searchlightTopicId} が会社のトピック一覧に無い。停止済みとは記録しない`,
+      );
+      return { topicNotFound: 1, requests: session.requestCount };
+    }
 
     // 停止を記録して index.json を作り直し、以後 dispatch の対象から外す（設計書 §5.4）。
     // 記録に失敗した場合は失敗として残し、翌日また止め直す（停止は冪等）。

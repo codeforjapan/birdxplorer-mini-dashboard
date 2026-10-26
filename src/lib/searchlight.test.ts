@@ -30,12 +30,18 @@ describe("planCollectionShutdown", () => {
   const topics = [enabledTopic("t1"), enabledTopic("t2"), enabledTopic("t3")];
 
   it("指定 topic だけの計画を返す", () => {
-    expect(planCollectionShutdown(topics, "t2").map((p) => p.topicId)).toEqual(["t2"]);
+    const { topicFound, plans } = planCollectionShutdown(topics, "t2");
+    expect(topicFound).toBe(true);
+    expect(plans.map((p) => p.topicId)).toEqual(["t2"]);
   });
 
-  it("指定 topic が既に無効なら空", () => {
+  it("指定 topic が既に無効なら、見つかったうえで計画は空", () => {
     const off = { id: "t2", collectionConfig: { enabled: false, platforms: [{ enabled: false }] } };
-    expect(planCollectionShutdown([enabledTopic("t1"), off], "t2")).toEqual([]);
+    expect(planCollectionShutdown([enabledTopic("t1"), off], "t2")).toEqual({ topicFound: true, plans: [] });
+  });
+
+  it("指定 topic が一覧に無ければ topicFound=false（既に無効とは区別する）", () => {
+    expect(planCollectionShutdown([enabledTopic("t1")], "typo")).toEqual({ topicFound: false, plans: [] });
   });
 });
 
@@ -55,7 +61,7 @@ describe("topic 絞り込み", () => {
 
   it("disableCollection は指定 topic だけ PUT する", async () => {
     const { session, puts } = recordingSession([enabledTopic("t1"), enabledTopic("t2")]);
-    expect(await disableCollection(session, "t2")).toEqual({ topicsDisabled: 1 });
+    expect(await disableCollection(session, "t2")).toEqual({ topicFound: true, topicsDisabled: 1 });
     expect(puts).toEqual(["/companies/co1/topics/t2"]);
   });
 });
