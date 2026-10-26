@@ -37,8 +37,7 @@ export function resolveTenantConfig(
 }
 
 /**
- * 終了日（JST）を過ぎているか。env.ts の isMonitoringEnded と同じ式で、
- * 終了日の当日いっぱいは監視中、翌日 00:00 JST から終了。
+ * 終了日（JST）を過ぎているか。終了日の当日いっぱいは監視中、翌日 00:00 JST から終了。
  */
 export function isTenantMonitoringEnded(
   cfg: Pick<TenantConfig, "monitorEndDate">,

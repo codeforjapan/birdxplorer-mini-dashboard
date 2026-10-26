@@ -89,7 +89,7 @@ export type Cluster = {
   aliasOf: string | null;
 };
 
-/** 30分ビン1つ分の集計。 */
+/** タイムラインのビン1つ分の集計。 */
 export type TimelineBin = {
   /** ビン開始時刻（epoch ms）。幅は TimelineFile.binMinutes。 */
   startAt: number;
