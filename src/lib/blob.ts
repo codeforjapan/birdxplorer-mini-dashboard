@@ -9,14 +9,29 @@ import { env } from "./env";
  * 永続URLも安定する。
  */
 
-export const PATH = {
-  notes: "data/notes.json",
-  timeline: "data/timeline.json",
-  clusters: "data/clusters.json",
-  crossPosts: "data/cross-posts.json",
-  dailyReport: (isoDay: string) => `reports/daily/${isoDay}.md`,
-  cumulativeReport: "reports/cumulative.md",
-} as const;
+/** 事例ごとの Blob パスの接頭辞に使える slug。パストラバーサルや大文字を弾く。 */
+const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,40}[a-z0-9])?$/;
+
+/**
+ * 事例ごとの Blob パス。slug をそのままパスに埋め込むので、ここで形式を検証する
+ * （`../x` のような値で他の事例や共有領域を指させないため）。
+ */
+export function tenantPaths(slug: string) {
+  if (!SLUG_RE.test(slug)) throw new Error(`不正な slug です: ${JSON.stringify(slug)}`);
+  const base = `tenants/${slug}`;
+  return {
+    notes: `${base}/data/notes.json`,
+    timeline: `${base}/data/timeline.json`,
+    clusters: `${base}/data/clusters.json`,
+    crossPosts: `${base}/data/cross-posts.json`,
+    dailyReport: (isoDay: string) => `${base}/reports/daily/${isoDay}.md`,
+    cumulativeReport: `${base}/reports/cumulative.md`,
+    config: `${base}/config.json`,
+  };
+}
+
+/** 事例一覧（dispatch が DB を起こさず監視中の事例を知るための公開スナップショット）。 */
+export const TENANT_INDEX_PATH = "tenants/index.json";
 
 /**
  * put() の cacheControlMaxAge（秒）。@vercel/blob は既定で1ヶ月キャッシュするが、
@@ -109,10 +124,12 @@ export async function writeText(
 }
 
 /** 日次ダイジェストの一覧（新しい順の "YYYY-MM-DD"）。アーカイブリンクの生成に使う。 */
-export async function listDailyReports(): Promise<string[]> {
-  const { blobs } = await list({ prefix: "reports/daily/", limit: 1000, token: token() });
+export async function listDailyReports(slug: string): Promise<string[]> {
+  // 接頭辞は tenantPaths 経由で作る（slug の検証を通し、他の事例の日次レポートを拾わない）
+  const prefix = tenantPaths(slug).dailyReport("").replace(/\.md$/, "");
+  const { blobs } = await list({ prefix, limit: 1000, token: token() });
   return blobs
-    .map((b) => b.pathname.match(/reports\/daily\/(\d{4}-\d{2}-\d{2})\.md$/)?.[1])
+    .map((b) => b.pathname.slice(prefix.length).match(/^(\d{4}-\d{2}-\d{2})\.md$/)?.[1])
     .filter((d): d is string => Boolean(d))
     .sort()
     .reverse();

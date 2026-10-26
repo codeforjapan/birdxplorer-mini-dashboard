@@ -1,6 +1,8 @@
-import { BIN_MINUTES } from "./constants";
 import { EVENT } from "./event";
 import { binStart, nextBin } from "./time";
+
+// モックは従来の30分ビンのまま（事例ごとのビン幅は TenantConfig 側が持つ）。
+const BIN_MINUTES = 30;
 import type {
   Cluster,
   ClustersFile,
@@ -361,8 +363,8 @@ export function generateMock(): MockData {
   // BLOB_READ_WRITE_TOKEN 等が無い環境でも動くよう、開始時刻は env() を参照せずモック専用に
   // 算出する（env() は他の必須変数(KV等)まで要求するため）。EVENT.occurredAt より数時間前から
   // 収集していた状態を再現できればよいので、発生時刻からの相対値で決める。
-  const monitorStartAt = binStart(EVENT.occurredAt - 3.45 * 60 * 60 * 1000);
-  const endAt = binStart(generatedAt);
+  const monitorStartAt = binStart(EVENT.occurredAt - 3.45 * 60 * 60 * 1000, BIN_MINUTES);
+  const endAt = binStart(generatedAt, BIN_MINUTES);
 
   // ── クラスタ ──
   // 意図的に `% 10` のままにしている(パレットは8色に縮小済み)。旧10色パレット時代に
@@ -391,7 +393,7 @@ export function generateMock(): MockData {
   // ── ノート ──
   const notes: Note[] = [];
   let noteSeq = 1;
-  for (let binAt = monitorStartAt; binAt <= endAt; binAt = nextBin(binAt)) {
+  for (let binAt = monitorStartAt; binAt <= endAt; binAt = nextBin(binAt, BIN_MINUTES)) {
     const minutesSince = (binAt - EVENT.occurredAt) / 60000;
     const intensity = intensityAt(minutesSince);
     const count = Math.max(0, Math.round(intensity * 6 + (rand() - 0.5) * 2));
@@ -441,8 +443,8 @@ export function generateMock(): MockData {
 
   // ── タイムライン(notes から集計。ゼロ件のビンも欠落させず埋める) ──
   const bins: TimelineBin[] = [];
-  for (let binAt = monitorStartAt; binAt <= endAt; binAt = nextBin(binAt)) {
-    const binEnd = nextBin(binAt);
+  for (let binAt = monitorStartAt; binAt <= endAt; binAt = nextBin(binAt, BIN_MINUTES)) {
+    const binEnd = nextBin(binAt, BIN_MINUTES);
     const inBin = notes.filter((n) => !n.excluded && n.createdAt >= binAt && n.createdAt < binEnd);
     const counts: Record<string, number> = {};
     for (const n of inBin) {
