@@ -91,7 +91,7 @@ export type Cluster = {
 
 /** 30分ビン1つ分の集計。 */
 export type TimelineBin = {
-  /** ビン開始時刻（epoch ms）。BIN_MINUTES 幅。 */
+  /** ビン開始時刻（epoch ms）。幅は TimelineFile.binMinutes。 */
   startAt: number;
   /** 除外ノートを含まない件数の合計。 */
   total: number;

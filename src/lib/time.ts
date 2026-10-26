@@ -74,6 +74,11 @@ export function binWidthLabel(binMinutes: number): string {
   return `${binMinutes}分`;
 }
 
+/** 軸目盛り。日単位のビンでは時刻が常に 00:00 になり意味を持たないので日付を出す。 */
+export function binTickLabel(startAt: number, binMinutes: number): string {
+  return binMinutes % 1440 === 0 ? mmdd(startAt) : hhmm(startAt);
+}
+
 /** "2026-07-28"。日次レポートのキーやURLに使う。 */
 export function isoDate(at: number): string {
   const { year, month, day } = jstParts(at);

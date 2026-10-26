@@ -1,8 +1,9 @@
 import { activeClusters, clusterLookup, resolveClusterId } from "./clusters";
 import { claimTypeLabel } from "./claimType";
 import { clusterColor, MAX_DISTINCT_CLUSTERS, OTHER_CLUSTER_COLOR, OTHER_CLUSTER_ID } from "./constants";
-import { env, isMonitoringEnded } from "./env";
-import { jstDateLabel, nextBin } from "./time";
+import { isTenantMonitoringEnded } from "./tenant/resolve";
+import type { PublicTenantConfig } from "./tenant/types";
+import { binStart, jstDateLabel, nextBin } from "./time";
 import type { Cluster, CrossPlatform, CrossPost, Note, SearchlightBadge, TimelineBin, TimelineFile } from "./types";
 
 /**
@@ -30,34 +31,16 @@ export function formatCount(n: number): string {
 }
 
 /**
- * 運用終了判定の安全なラッパー。
- *
- * `isMonitoringEnded` は BLOB/KV など監視終了の判定そのものとは無関係な必須環境変数まで
- * まとめて検証する(`env()` がコア設定をひとまとめに扱うため)。フロントエンドのみを
- * 動かすローカル開発やそれらが未設定の環境でも「クラッシュさせない」(design.md §9)を
- * 優先し、判定できない場合は「終了していない」側に倒す。
+ * 収集を終えたか。公開設定（Blob）の monitorEndDate だけで判定し、DB や環境変数を読まない。
+ * status は見ない（終了メッセージは終了日を表示するので、日付と食い違わせないため）。
  */
-export function safeIsMonitoringEnded(): boolean {
-  try {
-    return isMonitoringEnded();
-  } catch {
-    return false;
-  }
+export function safeIsMonitoringEnded(cfg: PublicTenantConfig, now: number = Date.now()): boolean {
+  return isTenantMonitoringEnded(cfg, now);
 }
 
-/**
- * 収集終了メッセージに使う日付ラベルの安全なラッパー。
- * MONITOR_END_DATE を表示文言に埋め込む唯一の場所にすることで、
- * env と表示文言が食い違う事故（環境変数を変えても文言が固定値のまま、等）を防ぐ。
- * 判定できない環境では表示側で使われない想定（safeIsMonitoringEnded が false を返す）だが、
- * 念のため null で安全側に倒す。
- */
-export function safeMonitoringEndedLabel(): string | null {
-  try {
-    return jstDateLabel(env().MONITOR_END_DATE);
-  } catch {
-    return null;
-  }
+/** 収集終了メッセージに使う日付ラベル。終了日を表示文言に埋め込む唯一の場所。 */
+export function safeMonitoringEndedLabel(cfg: PublicTenantConfig): string | null {
+  return /^\d{4}-\d{2}-\d{2}$/.test(cfg.monitorEndDate) ? jstDateLabel(cfg.monitorEndDate) : null;
 }
 
 /**
@@ -439,7 +422,8 @@ export function crossChartAxis(posts: readonly CrossPost[], binMinutes: number):
   if (dated.length === 0) return null;
   const min = Math.min(...dated);
   const max = Math.max(...dated);
-  const startAt = Math.floor(min / binMs) * binMs; // ビン境界に丸める
+  // UTC で丸めると1日ビンが JST 09:00 始まりになり、X タイムラインの日境界とずれる
+  const startAt = binStart(min, binMinutes);
   const binCount = Math.max(1, Math.floor((max - startAt) / binMs) + 1);
   return { startAt, binCount, binMs };
 }

@@ -1,5 +1,6 @@
 import { list, put } from "@vercel/blob";
 import { env } from "./env";
+import { isValidSlug } from "./tenant/slug";
 
 /**
  * データ本体の置き場（公開読み取り）。
@@ -9,15 +10,12 @@ import { env } from "./env";
  * 永続URLも安定する。
  */
 
-/** 事例ごとの Blob パスの接頭辞に使える slug。パストラバーサルや大文字を弾く。 */
-const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,40}[a-z0-9])?$/;
-
 /**
  * 事例ごとの Blob パス。slug をそのままパスに埋め込むので、ここで形式を検証する
  * （`../x` のような値で他の事例や共有領域を指させないため）。
  */
 export function tenantPaths(slug: string) {
-  if (!SLUG_RE.test(slug)) throw new Error(`不正な slug です: ${JSON.stringify(slug)}`);
+  if (!isValidSlug(slug)) throw new Error(`不正な slug です: ${JSON.stringify(slug)}`);
   const base = `tenants/${slug}`;
   return {
     notes: `${base}/data/notes.json`,

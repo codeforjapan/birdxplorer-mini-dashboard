@@ -1,4 +1,4 @@
-import { hhmm, mmdd } from "@/lib/time";
+import { binRangeLabel, hhmm } from "@/lib/time";
 import { statusLabel, type ViewNote } from "@/lib/view";
 import { Linkified } from "./Linkified";
 import { SearchlightBadges } from "./SearchlightBadges";
@@ -19,7 +19,7 @@ export function DetailPanel({
   return (
     <section className="rounded-xl border border-line bg-card p-4 sm:p-5" aria-live="polite">
       <h3 className="tabular text-[14px] font-semibold text-heading">
-        {mmdd(binStartAt)} {hhmm(binStartAt)} 〜 {hhmm(binEndAt)}
+        {binRangeLabel(binStartAt, binEndAt)}
         <span className="ml-2 font-sans text-[12px] font-normal text-muted">
           に付与されたNote（{notes.length}件）
         </span>
