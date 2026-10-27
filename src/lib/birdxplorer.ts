@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { env } from "./env";
-import { EVENT } from "./event";
 import type { Note, NoteStatus } from "./types";
 
 /**
@@ -270,11 +269,13 @@ export function toNote(raw: SearchedNoteForNote, classification: Classification,
 
 // ── searchNotes: メインの取得経路 ─────────────────────────────────
 
-// 検索語そのものは event.ts に集約している（テーマを変える際にここは書き換えない）。
+// 検索語は事例ごとの設定（cfg.searchKeywords）から呼び出し側が渡す。
 const DEFAULT_SEARCH_LIMIT = 1000; // API の上限（limit=1001 は 422 で拒否される）
 const DEFAULT_MAX_PAGES = 10;
 
 export type SearchNotesOptions = {
+  /** OR で結合する検索語。空だと全ノートに当たるので呼び出し側で必ず渡す。 */
+  keywords: readonly string[];
   /** epoch ms。inclusive（実測で確認済み。spec.md の「exclusive」記載は誤り）。 */
   from: number;
   /** epoch ms。inclusive。省略時は最新まで。 */
@@ -353,10 +354,11 @@ function buildBaseParams(opts: SearchNotesOptions, limit: number): URLSearchPara
 // エンコードも append で正しく行われる）。
 function withKeywords(
   base: URLSearchParams,
+  keywords: readonly string[],
   includesField: "note_includes_text" | "post_includes_text",
   searchModeField: "note_search_mode" | "post_search_mode",
 ): URLSearchParams {
-  for (const kw of EVENT.searchKeywords) base.append(includesField, kw);
+  for (const kw of keywords) base.append(includesField, kw);
   base.set(searchModeField, "or");
   return base;
 }
@@ -377,8 +379,11 @@ export async function searchNotes(opts: SearchNotesOptions): Promise<SearchNotes
   const limit = opts.limit ?? DEFAULT_SEARCH_LIMIT;
   const maxPages = opts.maxPages ?? DEFAULT_MAX_PAGES;
 
-  const noteParams = withKeywords(buildBaseParams(opts, limit), "note_includes_text", "note_search_mode");
-  const postParams = withKeywords(buildBaseParams(opts, limit), "post_includes_text", "post_search_mode");
+  // 検索語なしで投げると事例と無関係な全ノートを取り込んでしまう
+  if (opts.keywords.length === 0) throw new Error("searchNotes: 検索語が空です");
+
+  const noteParams = withKeywords(buildBaseParams(opts, limit), opts.keywords, "note_includes_text", "note_search_mode");
+  const postParams = withKeywords(buildBaseParams(opts, limit), opts.keywords, "post_includes_text", "post_search_mode");
 
   // note-mode と post-mode は独立なので並列で投げる（直列 2.6s → 並列 1.3s 程度）。
   const [noteResult, postResult] = await Promise.all([

@@ -1,22 +1,33 @@
-import { EVENT } from "@/lib/event";
-import { hhmm } from "@/lib/time";
+import type { PublicTenantConfig } from "@/lib/tenant/types";
+import { binRangeLabel, binWidthLabel, hhmm } from "@/lib/time";
 import { formatCount, type StatCards as StatCardsData } from "@/lib/view";
 
 /**
  * 統計カード(design.md §6.2)。カード3・4(最大クラスタ・ピーク帯)は呼び出し側で
  * 実データから算出済みの値を受け取るだけで、ここではハードコードしない。
- * カード2(本震)だけは spec.md 上固定の事実(M7.1 / 16:27)なので event.ts の
- * 整形済み値をそのまま表示する（フォーマットの組み立てはここでは行わない。
- * 別テーマでは「本震」に相当するものの形が変わりうるため event.ts 参照）。
+ * カード2(本震・投開票日など)は事例設定の整形済み値をそのまま表示する
+ * （型によって形が変わるため、フォーマットの組み立てはここでは行わない）。
  *
  * 件数は formatCount で整形する。toLocaleString は環境によって表記が変わり
  * ハイドレーション不一致を招くため使わない(view.ts のコメント参照)。
  */
-export function StatCards({ stats, binMinutes }: { stats: StatCardsData; binMinutes: number }) {
+export function StatCards({
+  stats,
+  binMinutes,
+  config,
+}: {
+  stats: StatCardsData;
+  binMinutes: number;
+  config: Pick<PublicTenantConfig, "keyMomentLabel" | "keyMomentValue">;
+}) {
   const peak = stats.peakBin;
-  const peakRangeLabel = peak
-    ? `${hhmm(peak.startAt)}〜${hhmm(peak.startAt + binMinutes * 60 * 1000)}`
-    : "—";
+  const peakEnd = peak ? peak.startAt + binMinutes * 60 * 1000 : 0;
+  // 日単位のビンでは時刻が 00:00〜00:00 になり読めないので日付で出す
+  const peakRangeLabel = !peak
+    ? "—"
+    : binMinutes % 1440 === 0
+      ? binRangeLabel(peak.startAt, peakEnd)
+      : `${hhmm(peak.startAt)}〜${hhmm(peakEnd)}`;
 
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -27,7 +38,7 @@ export function StatCards({ stats, binMinutes }: { stats: StatCardsData; binMinu
           stats.excludedCount !== null ? `うち除外${formatCount(stats.excludedCount)}件` : undefined
         }
       />
-      <StatCard label={EVENT.keyMomentLabel} value={EVENT.keyMomentValue} valueClassName="text-accent" />
+      <StatCard label={config.keyMomentLabel} value={config.keyMomentValue} valueClassName="text-accent" />
       <StatCard
         label="最大クラスタ"
         value={stats.largestCluster?.name ?? "—"}
@@ -36,7 +47,7 @@ export function StatCards({ stats, binMinutes }: { stats: StatCardsData; binMinu
       <StatCard
         label="ピーク帯"
         value={peakRangeLabel}
-        hint={peak ? `${formatCount(peak.total)}件/${binMinutes}分` : undefined}
+        hint={peak ? `${formatCount(peak.total)}件/${binWidthLabel(binMinutes)}` : undefined}
       />
     </div>
   );

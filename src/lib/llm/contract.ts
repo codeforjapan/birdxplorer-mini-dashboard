@@ -6,19 +6,6 @@
  */
 
 /**
- * プロンプトを改訂したら上げる。ノートの再分類対象の判定に使う。
- *
- * v2: Stage 1 の評価軸を「今回の地震の被害への直接言及か」から
- *     「地震をめぐる誤情報・撹乱情報を扱っているか」に広げた。
- *     旧基準では地震雲・人工地震・地震予知・避難所デマなどを取りこぼしていた。
- * v3: 判定軸を「誤情報の訂正か」から「今回の熊本地震に関係するか」へ変更。
- *     除外を"明確に無関係な話題"の1カテゴリのみに絞り、訂正の形でない地震関連情報
- *     （被害・安否・義援金・時系列訂正・地震絡みの政治論評・別災害の誤紐付け訂正）を
- *     含めるようにした。
- */
-export const CLASSIFIER_VERSION = "v3";
-
-/**
  * バッチ処理の結果。
  *
  * LLM は一部の項目だけ落として返すことがあるため、成功と失敗を必ず分けて返す。
@@ -39,11 +26,21 @@ export type RelevanceInput = {
   postText: string | null;
 };
 
+/** score 方式（災害型）の結果。閾値の判定は呼び出し側（classify.ts）が cfg.relevanceThreshold で行う。 */
 export type RelevanceResult = {
   noteId: string;
   /** 0-100 */
   relevance: number;
   /** 除外理由の記録用。閾値チューニングの検証に使う。 */
+  reason: string;
+};
+
+export type RelevanceVerdict = "related" | "unrelated";
+
+/** binary 方式（選挙型）の結果。中間値は持たない。 */
+export type RelevanceVerdictResult = {
+  noteId: string;
+  verdict: RelevanceVerdict;
   reason: string;
 };
 

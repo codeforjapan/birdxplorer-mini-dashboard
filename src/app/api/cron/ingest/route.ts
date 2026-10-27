@@ -1,7 +1,5 @@
 import { toNote, searchNotes } from "@/lib/birdxplorer";
-import { runCronJob } from "@/lib/cron";
-import { CLASSIFIER_VERSION } from "@/lib/llm";
-import { env } from "@/lib/env";
+import { runTenantCronJob } from "@/lib/cron";
 import { drainRetryQueue, enqueueRetry, filterUnseen } from "@/lib/state";
 import { UNCLASSIFIED_AT, publishSnapshot, readClusters, readNotes, upsertClusters, upsertNotes } from "@/lib/store";
 import type { Note } from "@/lib/types";
@@ -48,7 +46,7 @@ const MAX_CLASSIFY_PER_RUN = 50;
  * POST は手動実行・デバッグ用に同じ処理へ割り当てておく。
  */
 export async function GET(req: Request): Promise<Response> {
-  return runCronJob("ingest", req, async () => {
+  return runTenantCronJob("ingest", req, async (cfg) => {
     await ensureMigrated();
 
     const stats = {
@@ -75,7 +73,8 @@ export async function GET(req: Request): Promise<Response> {
     // 収まる規模のため、追加コストは10分ごとに API 1リクエスト（実測約1.3秒）だけで済む。
     // 既存分は filterUnseen が弾くので、LLM 分類の対象は従来どおり新規ノートのみ。
     const { records, truncated } = await searchNotes({
-      from: env().MONITOR_START_AT,
+      from: cfg.monitorStartAt,
+      keywords: cfg.searchKeywords,
       maxPages: MAX_SEARCH_PAGES,
     });
     // records は searchNotes が note∪post を noteId で重複排除した「distinct ノート数」。
@@ -83,7 +82,7 @@ export async function GET(req: Request): Promise<Response> {
     stats.truncated = truncated ? 1 : 0;
 
     // ── 2. noteId で重複排除 ──
-    const unseenIds = new Set(await filterUnseen(records.map((r) => r.raw.noteId)));
+    const unseenIds = new Set(await filterUnseen(cfg.slug, records.map((r) => r.raw.noteId)));
     const unseen = records.filter((r) => unseenIds.has(r.raw.noteId));
     stats.unseen = unseen.length;
 
@@ -92,7 +91,7 @@ export async function GET(req: Request): Promise<Response> {
     const toClassify = unseen.slice(0, MAX_CLASSIFY_PER_RUN);
     stats.deferred = unseen.length - toClassify.length;
 
-    const clusters = await readClusters();
+    const clusters = await readClusters(cfg.slug);
 
     // ── 3-4. Stage1 関連性判定 → Stage2 クラスタ割当 ──
     const candidates: Candidate[] = toClassify.map((r) => ({
@@ -100,7 +99,7 @@ export async function GET(req: Request): Promise<Response> {
       summary: r.raw.summary,
       postText: r.postText,
     }));
-    const mainResult = await classifyBatch(clusters, candidates);
+    const mainResult = await classifyBatch(cfg, clusters, candidates);
     stats.newClusters += mainResult.newClusters.length;
 
     const mainNotes: Note[] = [];
@@ -123,29 +122,29 @@ export async function GET(req: Request): Promise<Response> {
           excludeReason: `分類失敗（再試行待ち）: ${reason}`,
           clusterId: null,
           classifiedAt: UNCLASSIFIED_AT,
-          classifierVersion: CLASSIFIER_VERSION,
+          classifierVersion: cfg.classifierVersion,
         }),
       );
-      await enqueueRetry(r.raw.noteId, reason);
+      await enqueueRetry(cfg.slug, r.raw.noteId, reason);
       stats.failed++;
     }
 
     // クラスタ→ノートの順で書き込む（notes.cluster_id の外部キー制約のため）。
-    await upsertClusters(mainResult.newClusters);
-    await upsertNotes(mainNotes);
+    await upsertClusters(cfg.slug, mainResult.newClusters);
+    await upsertNotes(cfg.slug, mainNotes);
 
     // ── 6. 再試行キューの排出 ──
     // postText は初回 ingest の時点でメモリ上からしか扱われず、永続化していない
     // （CLAUDE.md「絶対に永続化しないもの」）。したがってここでは null を渡すほかなく、
     // 初回分類よりわずかに精度が落ちる。post本文を保存しないという設計上の制約の
     // 許容できる帰結として受け入れる（決定#3）。
-    const retryEntries = await drainRetryQueue(RETRY_DRAIN_LIMIT);
+    const retryEntries = await drainRetryQueue(cfg.slug, RETRY_DRAIN_LIMIT);
     stats.retried = retryEntries.length;
 
     if (retryEntries.length > 0) {
       // store.ts に「IDを指定して数件だけ読む」専用関数が無いため readNotes() で全件読む。
       // 単一イベントモニタでテーブル規模が小さいことを前提に許容する。
-      const allNotes = await readNotes();
+      const allNotes = await readNotes(cfg.slug);
       const existingByNoteId = new Map(allNotes.map((n) => [n.noteId, n]));
 
       const retryCandidates: Candidate[] = [];
@@ -156,7 +155,7 @@ export async function GET(req: Request): Promise<Response> {
         if (existing) retryCandidates.push({ noteId: existing.noteId, summary: existing.summary, postText: null });
       }
 
-      const retryResult = await classifyBatch(clusters, retryCandidates);
+      const retryResult = await classifyBatch(cfg, clusters, retryCandidates);
       stats.newClusters += retryResult.newClusters.length;
 
       const retryNotes: Note[] = [];
@@ -173,17 +172,17 @@ export async function GET(req: Request): Promise<Response> {
         } else {
           // まだ失敗。プレースホルダー行（UNCLASSIFIED_AT のまま）は変更せず、再度キューへ戻す。
           const reason = retryResult.failureReasons.get(candidate.noteId) ?? null;
-          await enqueueRetry(candidate.noteId, reason);
+          await enqueueRetry(cfg.slug, candidate.noteId, reason);
           stats.retryFailed++;
         }
       }
 
-      await upsertClusters(retryResult.newClusters);
-      await upsertNotes(retryNotes);
+      await upsertClusters(cfg.slug, retryResult.newClusters);
+      await upsertNotes(cfg.slug, retryNotes);
     }
 
     // ── 7. 公開スナップショットを書き出す ──
-    await publishSnapshot();
+    await publishSnapshot(cfg);
 
     return stats;
   });

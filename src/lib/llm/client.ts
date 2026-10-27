@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { llmEnv } from "../env";
-import { EVENT } from "../event";
 
 /**
  * OpenRouter への薄いトランスポート層。
@@ -21,9 +20,7 @@ import { EVENT } from "../event";
 const OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 
 // OpenRouter のアプリ帰属ヘッダー（ランキング・サポート追跡用。API 動作には必須ではない）。
-// 独自ドメインを取得していない運用（docs/spec.md 1章）のため固定文字列で代用する。
-const HTTP_REFERER = `https://github.com/${EVENT.githubRepo}`;
-const X_TITLE = EVENT.appTitle;
+// 独自ドメインを取得していない運用（docs/spec.md 1章）のため、事例ごとの GitHub リポジトリで代用する。
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 /** 1回の「質問」（ask）あたりのHTTPレベル再試行回数（429/5xx/network/timeout 用）。 */
@@ -41,7 +38,11 @@ const MAX_BACKOFF_MS = 8_000;
  */
 const MAX_TOTAL_WALL_MS = 45_000;
 
+export type Attribution = { githubRepo: string; appTitle: string };
+
 export type ChatJsonParams<T> = {
+  /** OpenRouter への帰属ヘッダー用。事例ごとに違うので呼び出し側（cfg）から渡す。 */
+  attribution: Attribution;
   /** ログ用のステージ名（"relevance" 等）。API キー以外の追跡情報として記録する。 */
   stage: string;
   systemPrompt: string;
@@ -107,6 +108,7 @@ type RequestOutcome =
   | { kind: "failure"; retryable: boolean; reason: string };
 
 async function requestOnce(
+  attribution: Attribution,
   systemPrompt: string,
   userPayload: unknown,
   jsonSchema: Record<string, unknown>,
@@ -123,8 +125,8 @@ async function requestOnce(
       headers: {
         Authorization: `Bearer ${OPENROUTER_API_KEY}`,
         "Content-Type": "application/json",
-        "HTTP-Referer": HTTP_REFERER,
-        "X-Title": X_TITLE,
+        "HTTP-Referer": `https://github.com/${attribution.githubRepo}`,
+        "X-Title": attribution.appTitle,
       },
       body: JSON.stringify({
         model: OPENROUTER_MODEL,
@@ -211,7 +213,7 @@ function extractJson(raw: string): unknown | null {
  * 通常フローとして扱えばよい。
  */
 export async function chatJson<T>(params: ChatJsonParams<T>): Promise<ChatJsonResult<T>> {
-  const { stage, systemPrompt, userPayload, jsonSchema, schemaName, zodSchema } = params;
+  const { attribution, stage, systemPrompt, userPayload, jsonSchema, schemaName, zodSchema } = params;
   const temperature = params.temperature ?? 0;
   const timeoutMs = params.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const deadline = Date.now() + MAX_TOTAL_WALL_MS;
@@ -227,7 +229,7 @@ export async function chatJson<T>(params: ChatJsonParams<T>): Promise<ChatJsonRe
         return { ok: false, reason: `wall time budget exceeded (last: ${lastReason})` };
       }
 
-      const outcome = await requestOnce(systemPrompt, userPayload, jsonSchema, schemaName, temperature, timeoutMs);
+      const outcome = await requestOnce(attribution, systemPrompt, userPayload, jsonSchema, schemaName, temperature, timeoutMs);
 
       if (outcome.kind === "failure") {
         lastReason = outcome.reason;

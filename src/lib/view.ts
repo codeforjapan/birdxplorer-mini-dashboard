@@ -1,8 +1,9 @@
 import { activeClusters, clusterLookup, resolveClusterId } from "./clusters";
 import { claimTypeLabel } from "./claimType";
-import { BIN_MINUTES, clusterColor, MAX_DISTINCT_CLUSTERS, OTHER_CLUSTER_COLOR, OTHER_CLUSTER_ID } from "./constants";
-import { env, isMonitoringEnded } from "./env";
-import { jstDateLabel, nextBin } from "./time";
+import { clusterColor, MAX_DISTINCT_CLUSTERS, OTHER_CLUSTER_COLOR, OTHER_CLUSTER_ID } from "./constants";
+import { isTenantMonitoringEnded } from "./tenant/resolve";
+import type { PublicTenantConfig } from "./tenant/types";
+import { binStart, jstDateLabel, nextBin } from "./time";
 import type { Cluster, CrossPlatform, CrossPost, Note, SearchlightBadge, TimelineBin, TimelineFile } from "./types";
 
 /**
@@ -30,34 +31,16 @@ export function formatCount(n: number): string {
 }
 
 /**
- * 運用終了判定の安全なラッパー。
- *
- * `isMonitoringEnded` は BLOB/KV など監視終了の判定そのものとは無関係な必須環境変数まで
- * まとめて検証する(`env()` がコア設定をひとまとめに扱うため)。フロントエンドのみを
- * 動かすローカル開発やそれらが未設定の環境でも「クラッシュさせない」(design.md §9)を
- * 優先し、判定できない場合は「終了していない」側に倒す。
+ * 収集を終えたか。公開設定（Blob）の monitorEndDate だけで判定し、DB や環境変数を読まない。
+ * status は見ない（終了メッセージは終了日を表示するので、日付と食い違わせないため）。
  */
-export function safeIsMonitoringEnded(): boolean {
-  try {
-    return isMonitoringEnded();
-  } catch {
-    return false;
-  }
+export function safeIsMonitoringEnded(cfg: PublicTenantConfig, now: number = Date.now()): boolean {
+  return isTenantMonitoringEnded(cfg, now);
 }
 
-/**
- * 収集終了メッセージに使う日付ラベルの安全なラッパー。
- * MONITOR_END_DATE を表示文言に埋め込む唯一の場所にすることで、
- * env と表示文言が食い違う事故（環境変数を変えても文言が固定値のまま、等）を防ぐ。
- * 判定できない環境では表示側で使われない想定（safeIsMonitoringEnded が false を返す）だが、
- * 念のため null で安全側に倒す。
- */
-export function safeMonitoringEndedLabel(): string | null {
-  try {
-    return jstDateLabel(env().MONITOR_END_DATE);
-  } catch {
-    return null;
-  }
+/** 収集終了メッセージに使う日付ラベル。終了日を表示文言に埋め込む唯一の場所。 */
+export function safeMonitoringEndedLabel(cfg: PublicTenantConfig): string | null {
+  return /^\d{4}-\d{2}-\d{2}$/.test(cfg.monitorEndDate) ? jstDateLabel(cfg.monitorEndDate) : null;
 }
 
 /**
@@ -287,8 +270,8 @@ export function peakBinIndex(bins: readonly TimelineBin[]): number {
 }
 
 /** ビンに属するノート一覧(時刻昇順)。詳細パネル・テーブルフォールバック共通で使う。 */
-export function notesInBin(notes: readonly Note[], bin: TimelineBin): Note[] {
-  const end = nextBin(bin.startAt);
+export function notesInBin(notes: readonly Note[], bin: TimelineBin, binMinutes: number): Note[] {
+  const end = nextBin(bin.startAt, binMinutes);
   return notes
     .filter((n) => n.createdAt >= bin.startAt && n.createdAt < end)
     .sort((a, b) => a.createdAt - b.createdAt);
@@ -418,8 +401,10 @@ function topClaim(posts: readonly CrossPost[]): { label: string; count: number }
   return { label: claimTypeLabel(top[0]), count: top[1] };
 }
 
-export const CROSS_BIN_MINUTES = BIN_MINUTES;
-export const CROSS_BIN_MS = CROSS_BIN_MINUTES * 60 * 1000;
+/** ビン幅（分）→ ミリ秒。ビン幅は事例ごとに違うので定数にせず引数で受け取る。 */
+export function crossBinMs(binMinutes: number): number {
+  return binMinutes * 60 * 1000;
+}
 
 /** 単系列チャートの1ビン(開始時刻＋件数)。 */
 export type CrossChartBin = { startAt: number; count: number };
@@ -430,18 +415,20 @@ export type CrossFilter = { platform: CrossPlatform; binStartAt: number | null }
 /** 全PF共通の時間ビン軸。 */
 export type CrossChartAxis = { startAt: number; binCount: number; binMs: number };
 
-/** 全非X投稿の publishedAt から共通の30分ビン軸を作る。dated が無ければ null。 */
-export function crossChartAxis(posts: readonly CrossPost[]): CrossChartAxis | null {
+/** 全非X投稿の publishedAt から共通のビン軸を作る。dated が無ければ null。 */
+export function crossChartAxis(posts: readonly CrossPost[], binMinutes: number): CrossChartAxis | null {
+  const binMs = crossBinMs(binMinutes);
   const dated = posts.map((p) => p.publishedAt).filter((v): v is number => typeof v === "number");
   if (dated.length === 0) return null;
   const min = Math.min(...dated);
   const max = Math.max(...dated);
-  const startAt = Math.floor(min / CROSS_BIN_MS) * CROSS_BIN_MS; // ビン境界に丸める
-  const binCount = Math.max(1, Math.floor((max - startAt) / CROSS_BIN_MS) + 1);
-  return { startAt, binCount, binMs: CROSS_BIN_MS };
+  // UTC で丸めると1日ビンが JST 09:00 始まりになり、X タイムラインの日境界とずれる
+  const startAt = binStart(min, binMinutes);
+  const binCount = Math.max(1, Math.floor((max - startAt) / binMs) + 1);
+  return { startAt, binCount, binMs };
 }
 
-/** 指定 PF の投稿を共通軸上の30分ビン件数へ。publishedAt null は除外(チャートに置けない)。 */
+/** 指定 PF の投稿を共通軸上のビン件数へ。publishedAt null は除外(チャートに置けない)。 */
 function chartBinsFor(posts: readonly CrossPost[], axis: CrossChartAxis | null): CrossChartBin[] {
   if (!axis) return [];
   const bins: CrossChartBin[] = Array.from({ length: axis.binCount }, (_, i) => ({
@@ -457,7 +444,11 @@ function chartBinsFor(posts: readonly CrossPost[], axis: CrossChartAxis | null):
 }
 
 /** 一覧を CrossFilter で絞る。filter=null は全件(順序保持)。 */
-export function filterCrossPosts(posts: readonly CrossPost[], filter: CrossFilter | null): CrossPost[] {
+export function filterCrossPosts(
+  posts: readonly CrossPost[],
+  filter: CrossFilter | null,
+  binMinutes: number,
+): CrossPost[] {
   if (!filter) return [...posts];
   return posts.filter((p) => {
     if (p.platform !== filter.platform) return false;
@@ -465,7 +456,7 @@ export function filterCrossPosts(posts: readonly CrossPost[], filter: CrossFilte
     return (
       typeof p.publishedAt === "number" &&
       p.publishedAt >= filter.binStartAt &&
-      p.publishedAt < filter.binStartAt + CROSS_BIN_MS
+      p.publishedAt < filter.binStartAt + crossBinMs(binMinutes)
     );
   });
 }
@@ -490,9 +481,10 @@ export type PfSummary = {
  */
 export function buildCrossPlatformSummary(
   posts: readonly CrossPost[],
+  binMinutes: number,
   axisOverride?: CrossChartAxis | null,
 ): PfSummary[] {
-  const axis = axisOverride ?? crossChartAxis(posts);
+  const axis = axisOverride ?? crossChartAxis(posts, binMinutes);
   const out: PfSummary[] = [];
   for (const platform of CROSS_PF_ORDER) {
     const group = posts.filter((p) => p.platform === platform);

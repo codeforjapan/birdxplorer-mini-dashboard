@@ -1,6 +1,6 @@
-import { PATH, readText, writeText } from "@/lib/blob";
+import { readText, tenantPaths, writeText } from "@/lib/blob";
 import { activeClusters, resolveClusterId } from "@/lib/clusters";
-import { runCronJob } from "@/lib/cron";
+import { runTenantCronJob } from "@/lib/cron";
 import { writeCumulativeReport, writeDailyDigest } from "@/lib/llm";
 import type { ReportCluster } from "@/lib/llm";
 import { readClusters, readNotes } from "@/lib/store";
@@ -59,14 +59,15 @@ function buildReportClusters(
 
 /** Vercel cron は GET で発火するため GET が本体（ingest/route.ts の同じ注記を参照）。 */
 export async function GET(req: Request): Promise<Response> {
-  return runCronJob("report", req, async () => {
+  return runTenantCronJob("report", req, async (cfg) => {
     await ensureMigrated();
+    const paths = tenantPaths(cfg.slug);
 
     const now = Date.now();
     const { from, to } = digestWindow(now); // 前日15:00〜当日15:00 JST
     const isoDay = isoDate(now);
 
-    const [clusters, notes] = await Promise.all([readClusters(), readNotes()]);
+    const [clusters, notes] = await Promise.all([readClusters(cfg.slug), readNotes(cfg.slug)]);
     const notesInWindow = notes.filter((n) => n.createdAt >= from && n.createdAt < to);
     const { reportClusters, totalNotes } = buildReportClusters(clusters, notesInWindow);
 
@@ -82,7 +83,7 @@ export async function GET(req: Request): Promise<Response> {
     };
 
     // ── Stage4: 日次ダイジェスト ──
-    const digest = await writeDailyDigest({ from, to, totalNotes, clusters: reportClusters });
+    const digest = await writeDailyDigest(cfg, { from, to, totalNotes, clusters: reportClusters });
     if (digest === null) {
       // LLM失敗。イミュータブルな一次記録を中途半端な内容で確定させるより、
       // 今回は書かずスキップする方が安全（次回実行時にまた挑戦できる）。
@@ -91,7 +92,7 @@ export async function GET(req: Request): Promise<Response> {
     }
 
     let digestForCumulative = digest;
-    const dailyResult = await writeText(PATH.dailyReport(isoDay), digest, { immutable: true });
+    const dailyResult = await writeText(paths.dailyReport(isoDay), digest, { immutable: true });
     if (dailyResult === false) {
       // 既に確定済み（イミュータブル）。上書きはしない — writeText の仕様どおりエラーではなくスキップとして扱う。
       stats.dailySkippedExisting = 1;
@@ -99,7 +100,7 @@ export async function GET(req: Request): Promise<Response> {
       // 今回生成し直した内容ではなく既存の確定版を読み直す（同日内に cron が
       // 二重実行された場合の取り違え防止。イミュータブルなファイルの読み戻しなので
       // 「Blobを読み戻さない」原則との抵触はない — 内容が変わり得ない読み取りだから安全）。
-      const published = await readText(PATH.dailyReport(isoDay), { revalidate: false });
+      const published = await readText(paths.dailyReport(isoDay), { revalidate: false });
       if (published !== null) digestForCumulative = published;
     } else {
       stats.dailyWritten = 1;
@@ -111,14 +112,14 @@ export async function GET(req: Request): Promise<Response> {
     // （真実は Postgres 側にある）についての話であり、累積レポートには他に読み出し元がない。
     // blob.ts の readText が revalidate:false（ISRキャッシュを経由せず常に最新を取得）を
     // 持つのはまさにこの用途のためなので、ここに限り読み戻す。
-    const previousCumulative = await readText(PATH.cumulativeReport, { revalidate: false });
-    const updatedCumulative = await writeCumulativeReport(previousCumulative, digestForCumulative, isoDay);
+    const previousCumulative = await readText(paths.cumulativeReport, { revalidate: false });
+    const updatedCumulative = await writeCumulativeReport(cfg, previousCumulative, digestForCumulative, isoDay);
 
     if (updatedCumulative === null) {
       // LLM失敗。前回の累積レポートをそのまま残す（何もしない）。
       stats.cumulativeSkippedLlmFailure = 1;
     } else {
-      await writeText(PATH.cumulativeReport, updatedCumulative);
+      await writeText(paths.cumulativeReport, updatedCumulative);
       stats.cumulativeWritten = 1;
     }
 

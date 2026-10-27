@@ -51,8 +51,8 @@ function firstUrl(v: unknown): string | null {
 }
 
 // ── 収集停止（アーカイブ時）─────────────────────────────────
-// MONITOR_END_DATE を過ぎたら収集を止めるための純ロジック。特定トピックIDを知らずとも、
-// 「収集が有効なトピック」を列挙して無効化計画に落とす（会社の全イベントトピックが対象）。
+// 事例の監視終了後に収集を止めるための純ロジック。会社には複数事例のトピックが同居するため、
+// 対象は終了した事例の topic ID に一致するトピックだけで、他の事例のトピックは止めない。
 
 type PlatformCollectionConfig = { enabled?: boolean; [k: string]: unknown };
 type TopicCollectionConfig = { enabled: boolean; platforms: PlatformCollectionConfig[]; [k: string]: unknown };
@@ -71,18 +71,30 @@ function asTopicConfig(v: unknown): TopicCollectionConfig | null {
 }
 
 /**
- * トピック一覧（`GET /companies/{co}/topics` の生レスポンス）から、収集が有効なトピックだけを
+ * トピック一覧（`GET /companies/{co}/topics` の生レスポンス）から、指定トピックのうち収集が有効なものだけを
  * 「無効化 PUT 計画」に変換する純関数。トピック本体 enabled やその他フィールドは触らず、
  * collectionConfig.enabled と全 PF の enabled を false に落とすだけ（web の mrd 等は現状維持＝
- * ①で踏んだ "web は metadata refresh 非対応" 400 を避ける）。何も有効でなければ空配列（完全 no-op）。
+ * ①で踏んだ "web は metadata refresh 非対応" 400 を避ける）。何も有効でなければ plans は空（完全 no-op）。
+ *
+ * topicFound を分けて返すのは、「既に止まっている」と「一覧に無い」を呼び出し側が区別するため。
+ * topic ID の誤記で一覧に無いのに停止済みと記録すると、本物のトピックが課金され続けても二度と止めに行かない。
  */
-export function planCollectionShutdown(topicsRaw: unknown): ShutdownPlan[] {
+export function planCollectionShutdown(
+  topicsRaw: unknown,
+  topicId: string,
+): { topicFound: boolean; plans: ShutdownPlan[] } {
   const topics = extractItems(topicsRaw);
   const plans: ShutdownPlan[] = [];
+  let topicFound = false;
   for (const t of topics) {
-    if (!isRecord(t) || typeof t.id !== "string") continue;
+    // 会社には複数事例のトピックが同居するため、指定トピック以外は止めない。
+    if (!isRecord(t) || t.id !== topicId) continue;
+    topicFound = true;
+    // collectionConfig は OpenAPI 上任意。無いのは自動収集を設定していないトピックなので止める対象なし
+    if (t.collectionConfig === undefined) continue;
     const cc = asTopicConfig(t.collectionConfig);
-    if (!cc) continue;
+    // 形が読めないまま「止める対象なし」とすると、収集中でも停止済みと記録されてしまう
+    if (!cc) throw new Error(`topic ${topicId} の collectionConfig が想定外の形で、収集状態を判定できない`);
     const anyEnabled = cc.enabled || cc.platforms.some((p) => p.enabled === true);
     if (!anyEnabled) continue;
     plans.push({
@@ -90,7 +102,7 @@ export function planCollectionShutdown(topicsRaw: unknown): ShutdownPlan[] {
       collectionConfig: { ...cc, enabled: false, platforms: cc.platforms.map((p) => ({ ...p, enabled: false })) },
     });
   }
-  return plans;
+  return { topicFound, plans };
 }
 
 /**
@@ -250,6 +262,7 @@ export type InsightPage<T> = { rows: T[]; truncated: boolean };
  */
 async function collectInsightPages<T>(
   session: SearchlightSession,
+  topicId: string,
   platform: string,
   map: (raw: unknown) => T | null,
 ): Promise<InsightPage<T>> {
@@ -258,7 +271,7 @@ async function collectInsightPages<T>(
   let truncated = false;
   for (let page = 1; page <= MAX_PAGES; page++) {
     const body = await session.getJson(
-      `/companies/${cfg.SEARCHLIGHT_COMPANY_ID}/insights?platform=${platform}&limit=${PAGE_SIZE}&page=${page}`,
+      `/companies/${cfg.SEARCHLIGHT_COMPANY_ID}/insights?platform=${platform}&topic_id=${encodeURIComponent(topicId)}&limit=${PAGE_SIZE}&page=${page}`,
     );
     const items = extractItems(body);
     for (const raw of items) {
@@ -278,9 +291,10 @@ async function collectInsightPages<T>(
 /** 対象会社の X insight を列挙し DB 行へ整形する。ページング仕様は collectInsightPages 参照。 */
 export async function getInsights(
   session: SearchlightSession,
+  topicId: string,
   now: number = Date.now(),
 ): Promise<InsightPage<SearchlightInsightRow>> {
-  return collectInsightPages(session, "x", (raw) => toBadgeRow(raw, now));
+  return collectInsightPages(session, topicId, "x", (raw) => toBadgeRow(raw, now));
 }
 
 /**
@@ -291,32 +305,36 @@ export async function getInsights(
  * 進捗がゼロになる（cron/ingest/route.ts の注意書きと同じ問題）。分割すれば失うのは最大1PF分で、
  * upsert は insight_id 冪等なので次回実行で収束する。
  *
- * topic 絞りは不要（会社の insight は全件 custom トピック由来。加えて toCrossRow の
- * payload 検証で非custom は自然に除外される。実 API で検証済み）。
+ * insights は会社スコープなので、複数事例が同居しても混ざらないよう topic_id で絞る。
  */
 export async function getCrossInsightsFor(
   session: SearchlightSession,
+  topicId: string,
   platform: CrossPlatform,
   now: number = Date.now(),
 ): Promise<InsightPage<CrossPostRow>> {
-  return collectInsightPages(session, platform, (raw) => toCrossRow(raw, now));
+  return collectInsightPages(session, topicId, platform, (raw) => toCrossRow(raw, now));
 }
 
 /**
- * 会社の収集を停止する（アーカイブ時）。有効なトピックの collectionConfig を無効化 PUT する。
- * 特定トピックIDは不要（`planCollectionShutdown` が有効トピックを見つける）。冪等＝有効トピックが
- * 無ければ何もせず 0 を返す。PUT は `TopicRequest` の部分更新で、body は `{collectionConfig}` だけ送る
- * （`transcriptionPrompt:null` を含めると 400 になるため）。返り値の topicsDisabled は実際に PUT した数。
+ * 指定 topic の収集を停止する（事例の終了時）。そのトピックの collectionConfig を無効化 PUT し、
+ * 同じ会社にある他事例のトピックは触らない。冪等＝有効でなければ何もせず 0 を返す。PUT は `TopicRequest` の部分更新で、body は `{collectionConfig}` だけ送る
+ * （`transcriptionPrompt:null` を含めると 400 になるため）。返り値の topicsDisabled は実際に PUT した数、
+ * topicFound は会社のトピック一覧に指定 topic があったか。
  */
-export async function disableCollection(session: SearchlightSession): Promise<{ topicsDisabled: number }> {
+export async function disableCollection(
+  session: SearchlightSession,
+  topicId: string,
+): Promise<{ topicFound: boolean; topicsDisabled: number }> {
   const cfg = searchlightEnv();
-  const plans = planCollectionShutdown(
+  const { topicFound, plans } = planCollectionShutdown(
     await session.getJson(`/companies/${cfg.SEARCHLIGHT_COMPANY_ID}/topics`),
+    topicId,
   );
   for (const plan of plans) {
     await session.putJson(`/companies/${cfg.SEARCHLIGHT_COMPANY_ID}/topics/${plan.topicId}`, {
       collectionConfig: plan.collectionConfig,
     });
   }
-  return { topicsDisabled: plans.length };
+  return { topicFound, topicsDisabled: plans.length };
 }

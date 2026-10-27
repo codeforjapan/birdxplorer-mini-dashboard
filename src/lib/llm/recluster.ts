@@ -1,8 +1,7 @@
 import { z } from "zod";
-import { EVENT } from "../event";
+import type { TenantConfig } from "../tenant/types";
 import { chatJson } from "./client";
 import type { ReclusterPlan, ReportCluster } from "./contract";
-import { TAXONOMY } from "./taxonomy";
 
 /**
  * Stage 3 — 再編成（docs/spec.md §4 Stage 3、1時間ごと）。
@@ -36,9 +35,13 @@ import { TAXONOMY } from "./taxonomy";
  * 別の実害があり、個々の操作単位で弾く方が実害が小さいと判断した。
  */
 
-const RECLUSTER_SYSTEM_PROMPT = `あなたはXコミュニティノートのクラスタ（噂の種類ごとのグループ）を整理するアシスタントです。
+export function buildReclusterSystemPrompt(cfg: TenantConfig): string {
+  const { taxonomy } = cfg;
+  // 中立性ルールは選挙型だけが持つ。null のときは行ごと出さない。
+  const neutralityLine = taxonomy.namingNeutralityRule ? `\n   ${taxonomy.namingNeutralityRule}` : "";
+  return `あなたはXコミュニティノートのクラスタ（噂の種類ごとのグループ）を整理するアシスタントです。
 
-対象は「${EVENT.llmContextPhraseCompact}」に関する誤情報クラスタです。各クラスタには id・name・description・
+対象は「${cfg.llmContextPhraseCompact}」に関する誤情報クラスタです。各クラスタには id・name・description・
 所属ノート数・代表的なノート本文のサンプルが渡されます。
 
 あなたの仕事は2つです:
@@ -46,7 +49,7 @@ const RECLUSTER_SYSTEM_PROMPT = `あなたはXコミュニティノートのク�
    統合は「元のクラスタが消えて別クラスタに吸収される」という重い操作です。
    **本当に同じ噂だと確信できる場合だけ**提案してください。同じ噂だと言えるのは、
    「誰が」「何をした（またはしなかった）」という主張の中身が一致している場合だけです。
-   **表層的な類似は統合の根拠になりません。** ${TAXONOMY.overMergeCounterExample}似ているが微妙に違う噂（対象が違う、時期が違う、主張の中身が違う等）は
+   **表層的な類似は統合の根拠になりません。** ${taxonomy.overMergeCounterExample}似ているが微妙に違う噂（対象が違う、時期が違う、主張の中身が違う等）は
    統合しないでください。**判断に迷ったら、統合しないことを選んでください。** クラスタが
    分割されたままなのは見た目が煩雑になるだけの見かけ上の問題で、次回以降いつでも直せますが、
    誤った統合は無関係なノートに不適切なラベルを貼り付けたまま公開され続けるという実害を生み、
@@ -55,13 +58,14 @@ const RECLUSTER_SYSTEM_PROMPT = `あなたはXコミュニティノートのク�
    統合先（into）は、統合される側（from）よりも代表的・説明が的確なクラスタのIDを選んでください。
 2. rename（改名）: 名前が曖昧・トピック名になってしまっている・実態とずれているクラスタがあれば、
    より的確な日本語の短い名前と説明に改めてください。良い名前は「どんな噂か」を表すもの
-   （例:「${TAXONOMY.clusterNamingGoodExampleSingle}」）で、単なるトピック名（例:「${TAXONOMY.clusterNamingBadExampleSingle}」）にしないでください。
+   （例:「${taxonomy.clusterNamingGoodExampleSingle}」）で、単なるトピック名（例:「${taxonomy.clusterNamingBadExampleSingle}」）にしないでください。${neutralityLine}
 
 制約:
 - from / into / id には、渡されたクラスタ一覧に実在する id だけを使ってください。存在しないIDを作らないでください。
 - 1つのクラスタを複数の統合先に振り分けたり、統合の連鎖（AをBに統合し、さらにBをCに統合する等）を
   提案しないでください。
 - 変更が不要なクラスタについては何も提案しなくて構いません（merge・rename とも空配列で構いません）。`;
+}
 
 const RESPONSE_JSON_SCHEMA = {
   type: "object",
@@ -185,14 +189,15 @@ function sanitizeRename(
   return kept;
 }
 
-export async function planRecluster(clusters: ReportCluster[]): Promise<ReclusterPlan | null> {
+export async function planRecluster(cfg: TenantConfig, clusters: ReportCluster[]): Promise<ReclusterPlan | null> {
   if (clusters.length === 0) return { merge: [], rename: [] }; // 整理対象がない
 
   const validIds = new Set(clusters.map((c) => c.clusterId));
 
   const outcome = await chatJson({
+    attribution: { githubRepo: cfg.githubRepo, appTitle: cfg.appTitle },
     stage: "recluster",
-    systemPrompt: RECLUSTER_SYSTEM_PROMPT,
+    systemPrompt: buildReclusterSystemPrompt(cfg),
     userPayload: {
       clusters: clusters.map((c) => ({
         id: c.clusterId,

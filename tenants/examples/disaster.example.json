@@ -1,0 +1,64 @@
+{
+  "slug": "kumamoto-example",
+  "type": "disaster",
+  "status": "active",
+  "settings": {
+    "slug": "kumamoto-example",
+    "siteTitle": "コミュニティノートタイムライン 令和8年熊本地震",
+    "siteDescription": "令和8年熊本地震（2026年7月28日 16:27 発生・M7.1）に関するXコミュニティノートを継続収集し、内容ごとに分類して時系列で可視化する観測サイト。",
+    "eyebrowLabel": "BirdXplorer コミュニティノート観測",
+    "scheduleLabel": "2026年7月28日 16:27 発生（M7.1）",
+    "monitorStartAt": 1785211200000,
+    "monitorEndDate": "2026-08-31",
+    "searchKeywords": [
+      "熊本",
+      "地震",
+      "津波",
+      "災害",
+      "避難所",
+      "氷川",
+      "八代",
+      "九州",
+      "令和8年",
+      "令和８年",
+      "イオンモール",
+      "トリアージ",
+      "震度7",
+      "宇城",
+      "阿蘇",
+      "自衛隊",
+      "被災",
+      "義援金",
+      "募金",
+      "ボランティア"
+    ],
+    "llmContextPhrase": "2026年7月28日に発生した熊本地震",
+    "llmContextPhraseCompact": "2026年7月28日の熊本地震",
+    "llmContextPhraseShort": "熊本地震",
+    "keyMoments": [
+      {
+        "at": 1785223620000,
+        "markerLabel": "本震 16:27"
+      }
+    ],
+    "keyMomentLabel": "本震",
+    "keyMomentValue": "M7.1 / 16:27",
+    "githubRepo": "code4japan/kumamoto-birdxplorer",
+    "appTitle": "kumamoto-birdxplorer",
+    "issuesUrl": "https://github.com/codeforjapan/kumamoto-earthquake-dashboard/issues",
+    "officialSourcesIntro": "地震・被害・避難に関する一次情報は",
+    "officialSources": [
+      {
+        "label": "気象庁",
+        "url": "https://www.jma.go.jp/"
+      },
+      {
+        "label": "熊本県",
+        "url": "https://www.pref.kumamoto.jp/"
+      }
+    ],
+    "officialSourcesDisclaimer": "本サイトは防災情報を提供するものではありません。",
+    "searchlightTopicId": null
+  },
+  "overrides": {}
+}

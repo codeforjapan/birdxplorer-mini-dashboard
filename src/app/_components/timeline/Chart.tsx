@@ -1,7 +1,7 @@
 "use client";
 
-import { EVENT } from "@/lib/event";
-import { binStart, hhmm, nextBin } from "@/lib/time";
+import type { KeyMoment } from "@/lib/tenant/types";
+import { binStart, binTickLabel, binWidthLabel, nextBin } from "@/lib/time";
 import type { ChartBin, DisplayCluster } from "@/lib/view";
 
 /**
@@ -9,7 +9,7 @@ import type { ChartBin, DisplayCluster } from "@/lib/view";
  *
  * チャートライブラリを使わず SVG を手書きしている理由は仕様側にある:
  * 水平グリッドのみ・Y軸は軸線非表示・X軸目盛りの間引き(3本/4本おき)・最上段のみ
- * 上端2px角丸・16:30の破線基準線、といった要求はライブラリの既定の描画と噛み合わず、
+ * 上端2px角丸・基準線の破線、といった要求はライブラリの既定の描画と噛み合わず、
  * 素のSVGで座標計算した方が結局は速い。`viewBox` を使うことで「常に親幅に追従し、
  * 横スクロールを発生させない」(§8)も自然に満たせる。
  *
@@ -23,7 +23,7 @@ const W = 960;
 const H = 320;
 const PAD_LEFT = 28; // Y軸ラベル用の幅(§6.3)
 const PAD_RIGHT = 8;
-const PAD_TOP = 28; // 「{EVENT.keyMomentLabel} 16:27」ラベルの余白
+const PAD_TOP = 28; // 基準線ラベル（「本震 16:27」等）の余白
 const PAD_BOTTOM = 22; // X軸目盛りラベル用
 
 /** 整数のみのY軸目盛りを生成する(§6.3: 「Y軸:整数のみ」)。 */
@@ -64,7 +64,7 @@ export type ChartProps = {
   bins: ChartBin[];
   legend: DisplayCluster[];
   binMinutes: number;
-  mainshockAt: number;
+  keyMoments: readonly KeyMoment[];
   selectedIndex: number;
   hoveredIndex: number | null;
   highlightedClusterId: string | null;
@@ -76,7 +76,7 @@ export function Chart({
   bins,
   legend,
   binMinutes,
-  mainshockAt,
+  keyMoments,
   selectedIndex,
   hoveredIndex,
   highlightedClusterId,
@@ -102,11 +102,15 @@ export function Chart({
   const tickEvery3 = bins.map((b, i) => ({ i, bin: b })).filter(({ i }) => i % 3 === 0);
   const tickEvery4 = bins.map((b, i) => ({ i, bin: b })).filter(({ i }) => i % 4 === 0);
 
-  // 基準線: mainshockAt を含むビンの「次のビン」の左端に破線を引く(design.md §6.3)。
-  // 本震(16:27)の場合、これは常に「16:30」のビンになる。ハードコードした時刻文字列で
-  // 照合すると mainshockAt を変えた途端に一致しなくなる(=線が消える)ため、
-  // 必ず mainshockAt から動的に算出する。
-  const mainshockBinIndex = bins.findIndex((b) => b.startAt === nextBin(binStart(mainshockAt)));
+  // 基準線: その瞬間以降で最初のビン境界に破線を引く(design.md §6.3)。
+  // 本震 16:27 なら 16:30 の境界（本震前のビンに地震のノートは原理的に無い）、
+  // 投開票日 00:00 のように境界ちょうどならそのビンの左端になる。
+  // 時刻文字列で照合すると設定を変えた途端に線が消えるため、必ず at から算出する。
+  const markers = keyMoments.map((m) => {
+    const start = binStart(m.at, binMinutes);
+    const boundary = start === m.at ? start : nextBin(start, binMinutes);
+    return { label: m.markerLabel, binIndex: bins.findIndex((b) => b.startAt === boundary) };
+  });
 
   const hovered = hoveredIndex !== null ? bins[hoveredIndex] : null;
   const hoveredTop = hovered ? scaleY(hovered.total) : 0;
@@ -119,7 +123,7 @@ export function Chart({
         className="block w-full"
         style={{ height: H }}
         role="img"
-        aria-label="30分単位のNote付与件数の積み上げ棒グラフ。詳細は下部の表を参照してください。"
+        aria-label={`${binWidthLabel(binMinutes)}単位のNote付与件数の積み上げ棒グラフ。詳細は下部の表を参照してください。`}
       >
         {/* 水平グリッド線のみ(§6.3: 垂直グリッドは引かない) */}
         {yTicks
@@ -238,7 +242,7 @@ export function Chart({
                 fill="transparent"
                 tabIndex={0}
                 role="button"
-                aria-label={`${hhmm(bin.startAt)}からの30分間、合計${bin.total}件${
+                aria-label={`${binTickLabel(bin.startAt, binMinutes)}からの${binWidthLabel(binMinutes)}間、合計${bin.total}件${
                   selectedIndex === i ? "(選択中)" : ""
                 }`}
                 onMouseEnter={() => onHover(i)}
@@ -270,7 +274,7 @@ export function Chart({
               fontSize={10}
               fill="var(--color-label)"
             >
-              {hhmm(bin.startAt)}
+              {binTickLabel(bin.startAt, binMinutes)}
             </text>
           ))}
         </g>
@@ -285,33 +289,35 @@ export function Chart({
               fontSize={10}
               fill="var(--color-label)"
             >
-              {hhmm(bin.startAt)}
+              {binTickLabel(bin.startAt, binMinutes)}
             </text>
           ))}
         </g>
 
-        {/* 本震の基準線 */}
-        {mainshockBinIndex >= 0 && (
-          <g>
-            <line
-              x1={PAD_LEFT + slot * mainshockBinIndex}
-              x2={PAD_LEFT + slot * mainshockBinIndex}
-              y1={PAD_TOP}
-              y2={PAD_TOP + plotH}
-              stroke="var(--color-accent)"
-              strokeWidth={1}
-              strokeDasharray="4 3"
-            />
-            <text
-              x={PAD_LEFT + slot * mainshockBinIndex + 4}
-              y={PAD_TOP - 6}
-              className="tabular"
-              fontSize={10}
-              fill="var(--color-accent)"
-            >
-              {EVENT.keyMomentLabel} {hhmm(mainshockAt)}
-            </text>
-          </g>
+        {/* 基準線 */}
+        {markers.map(({ label, binIndex }) =>
+          binIndex < 0 ? null : (
+            <g key={label}>
+              <line
+                x1={PAD_LEFT + slot * binIndex}
+                x2={PAD_LEFT + slot * binIndex}
+                y1={PAD_TOP}
+                y2={PAD_TOP + plotH}
+                stroke="var(--color-accent)"
+                strokeWidth={1}
+                strokeDasharray="4 3"
+              />
+              <text
+                x={PAD_LEFT + slot * binIndex + 4}
+                y={PAD_TOP - 6}
+                className="tabular"
+                fontSize={10}
+                fill="var(--color-accent)"
+              >
+                {label}
+              </text>
+            </g>
+          ),
         )}
       </svg>
 
@@ -327,7 +333,7 @@ export function Chart({
           }}
         >
           <div className="font-semibold text-heading">
-            {hhmm(hovered.startAt)}〜 計{hovered.total}件
+            {binTickLabel(hovered.startAt, binMinutes)}〜 計{hovered.total}件
           </div>
           <div className="mt-1 flex flex-col gap-0.5">
             {hovered.segments.map((seg) => {
@@ -348,7 +354,7 @@ export function Chart({
           </div>
         </div>
       )}
-      <span className="sr-only">ビン幅は{binMinutes}分です。</span>
+      <span className="sr-only">ビン幅は{binWidthLabel(binMinutes)}です。</span>
     </div>
   );
 }

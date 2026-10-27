@@ -1,10 +1,9 @@
 import { z } from "zod";
 import { activeClusters } from "../clusters";
-import { EVENT } from "../event";
+import type { TenantConfig } from "../tenant/types";
 import type { Cluster } from "../types";
 import { chatJson, chunk } from "./client";
 import type { AssignInput, ClusterAssignment, LlmBatchResult } from "./contract";
-import { TAXONOMY } from "./taxonomy";
 
 /**
  * Stage 2 — クラスタ割当（docs/spec.md §4 Stage 2）。
@@ -22,9 +21,13 @@ import { TAXONOMY } from "./taxonomy";
 
 const CHUNK_SIZE = 20;
 
-const ASSIGN_SYSTEM_PROMPT = `あなたはXコミュニティノートを「噂の種類（クラスタ）」に分類するアシスタントです。
+export function buildAssignSystemPrompt(cfg: TenantConfig): string {
+  const { taxonomy } = cfg;
+  // 中立性ルールは選挙型だけが持つ。null のときは行ごと出さず、空の箇条書きを残さない。
+  const neutralityLine = taxonomy.namingNeutralityRule ? `\n- ${taxonomy.namingNeutralityRule}` : "";
+  return `あなたはXコミュニティノートを「噂の種類（クラスタ）」に分類するアシスタントです。
 
-対象はすべて「${EVENT.llmContextPhraseCompact}」に関連すると判定済みのノートです。
+対象はすべて「${cfg.llmContextPhraseCompact}」に関連すると判定済みのノートです。
 クラスタは固定のタクソノミーではなく、これまでに見つかった「噂・誤情報の型」の一覧です。
 
 分類方針（最重要）:
@@ -32,12 +35,13 @@ const ASSIGN_SYSTEM_PROMPT = `あなたはXコミュニティノートを「噂�
 - 新規クラスタ（kind: "new"）を提案してよいのは、既存のどのクラスタとも噂の内容が明確に異なる場合だけです。
   「表現が違うだけで言っている内容は同じ噂」は既存クラスタに寄せてください。新規提案を安易に増やさないでください。
 - クラスタ名（name）は日本語で短く、「何のトピックか」ではなく「どんな噂・誤情報か」を表すものにしてください。
-  良い例: ${TAXONOMY.clusterNamingGoodExamples}
-  悪い例: ${TAXONOMY.clusterNamingBadExamples}のようなトピック名そのもの
-- description は1-2文で、その噂が具体的にどういう内容かを説明してください。
+  良い例: ${taxonomy.clusterNamingGoodExamples}
+  悪い例: ${taxonomy.clusterNamingBadExamples}のようなトピック名そのもの
+- description は1-2文で、その噂が具体的にどういう内容かを説明してください。${neutralityLine}
 
 既存クラスタが1件もない場合のみ、最初のノートから新規クラスタを起こして構いません。
 入力された note_id は1件も欠かさず、必ずすべてに対して結果を1件ずつ返してください。`;
+}
 
 const RESPONSE_JSON_SCHEMA = {
   type: "object",
@@ -86,6 +90,7 @@ function toAssignment(raw: z.infer<typeof ItemSchema>): ClusterAssignment | null
 }
 
 async function assignChunk(
+  cfg: TenantConfig,
   validClusterIds: ReadonlySet<string>,
   clusterPayload: { id: string; name: string; description: string }[],
   inputs: AssignInput[],
@@ -93,8 +98,9 @@ async function assignChunk(
   const requestedIds = new Set(inputs.map((n) => n.noteId));
 
   const outcome = await chatJson({
+    attribution: { githubRepo: cfg.githubRepo, appTitle: cfg.appTitle },
     stage: "assign",
-    systemPrompt: ASSIGN_SYSTEM_PROMPT,
+    systemPrompt: buildAssignSystemPrompt(cfg),
     userPayload: {
       existing_clusters: clusterPayload,
       notes: inputs.map((n) => ({ note_id: n.noteId, summary: n.summary })),
@@ -147,6 +153,7 @@ async function assignChunk(
 }
 
 export async function assignClusters(
+  cfg: TenantConfig,
   clusters: Cluster[],
   inputs: AssignInput[],
 ): Promise<LlmBatchResult<ClusterAssignment>> {
@@ -160,7 +167,7 @@ export async function assignClusters(
   const results: ClusterAssignment[] = [];
   const failedNoteIds: string[] = [];
   for (const part of chunk(inputs, CHUNK_SIZE)) {
-    const chunkResult = await assignChunk(validClusterIds, clusterPayload, part);
+    const chunkResult = await assignChunk(cfg, validClusterIds, clusterPayload, part);
     results.push(...chunkResult.results);
     failedNoteIds.push(...chunkResult.failedNoteIds);
   }

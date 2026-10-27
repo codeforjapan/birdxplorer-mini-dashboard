@@ -6,6 +6,8 @@ import { ClusterNoteList } from "./ClusterNoteList";
 import { DetailPanel } from "./DetailPanel";
 import { Legend } from "./Legend";
 import { TableFallback } from "./TableFallback";
+import type { KeyMoment } from "@/lib/tenant/types";
+import { binWidthLabel } from "@/lib/time";
 import type { ChartBin, DisplayCluster, ViewNote } from "@/lib/view";
 
 /**
@@ -21,14 +23,14 @@ export function TimelineExplorer({
   legend,
   notes,
   binMinutes,
-  mainshockAt,
+  keyMoments,
   initialSelectedIndex,
 }: {
   bins: ChartBin[];
   legend: DisplayCluster[];
   notes: ViewNote[];
   binMinutes: number;
-  mainshockAt: number;
+  keyMoments: readonly KeyMoment[];
   initialSelectedIndex: number;
 }) {
   const [selectedIndex, setSelectedIndex] = useState(initialSelectedIndex);
@@ -49,7 +51,9 @@ export function TimelineExplorer({
     <div className="flex flex-col gap-4">
       <section className="rounded-xl border border-line bg-card p-4 sm:p-5">
         <div className="mb-3 flex items-center justify-between gap-2">
-          <h2 className="text-[14px] font-semibold text-heading">30分単位のNote付与件数</h2>
+          <h2 className="text-[14px] font-semibold text-heading">
+            {binWidthLabel(binMinutes)}単位のNote付与件数
+          </h2>
           <span className="shrink-0 text-[10px] text-label">クリックで内訳を表示</span>
         </div>
 
@@ -57,7 +61,7 @@ export function TimelineExplorer({
           bins={bins}
           legend={legend}
           binMinutes={binMinutes}
-          mainshockAt={mainshockAt}
+          keyMoments={keyMoments}
           selectedIndex={selectedIndex}
           hoveredIndex={hoveredIndex}
           highlightedClusterId={highlightedClusterId}
@@ -79,7 +83,7 @@ export function TimelineExplorer({
           </div>
         )}
 
-        <TableFallback bins={bins} legend={legend} />
+        <TableFallback bins={bins} legend={legend} binMinutes={binMinutes} />
       </section>
 
       {!isEmpty && selectedBin && (

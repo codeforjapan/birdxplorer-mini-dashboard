@@ -5,7 +5,6 @@
 
 export { assignClusters } from "./assign";
 export {
-  CLASSIFIER_VERSION,
   type AssignInput,
   type ClusterAssignment,
   type DigestInput,
@@ -13,8 +12,10 @@ export {
   type ReclusterPlan,
   type RelevanceInput,
   type RelevanceResult,
+  type RelevanceVerdict,
+  type RelevanceVerdictResult,
   type ReportCluster,
 } from "./contract";
 export { planRecluster } from "./recluster";
 export { writeCumulativeReport, writeDailyDigest } from "./report";
-export { scoreRelevance } from "./relevance";
+export { judgeRelevance, scoreRelevance } from "./relevance";
