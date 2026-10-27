@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { readJson, readText, tenantPaths } from "@/lib/blob";
+import { readJson, readTextStrict, tenantPaths } from "@/lib/blob";
 import { readPublicConfig } from "@/lib/tenant/publish";
 import type { ClustersFile, NotesFile } from "@/lib/types";
 import { digestWindow, jstDateStart, mmdd, mmddhhmm } from "@/lib/time";
@@ -43,7 +43,14 @@ export default async function DailyReportPage({ params }: { params: Params }) {
   if (!config || config.status === "draft") notFound();
   const paths = tenantPaths(slug);
 
-  const markdown = await readText(paths.dailyReport(date)).catch(() => null);
+  // 本文も設定と同じく、読み取り失敗は 404 にしない（revalidate の1時間、生成済みのレポートが 404 で固定されるため）
+  let markdown: string | null;
+  try {
+    markdown = await readTextStrict(paths.dailyReport(date));
+  } catch (e) {
+    console.error(`[daily-report] ${slug}/${date} の本文が読めない`, e);
+    throw e;
+  }
   if (markdown === null) {
     // Blobが存在しない(まだ生成されていない、あるいは日付を打ち間違えた)場合は404に倒す。
     notFound();
