@@ -49,6 +49,19 @@ describe("planCollectionShutdown", () => {
     expect(() => planCollectionShutdown([{ id: "t2", collectionConfig: { enabled: true } }], "t2")).toThrow();
   });
 
+  it("指定 topic に collectionConfig が無ければ収集していない扱い（例外にしない）", () => {
+    expect(planCollectionShutdown([{ id: "t2" }], "t2")).toEqual({ topicFound: true, plans: [] });
+    expect(planCollectionShutdown([{ id: "t2", collectionConfig: undefined }], "t2")).toEqual({
+      topicFound: true,
+      plans: [],
+    });
+  });
+
+  it("collectionConfig があって形が読めないものは例外（文字列・platforms 欠落）", () => {
+    expect(() => planCollectionShutdown([{ id: "t2", collectionConfig: "on" }], "t2")).toThrow(/collectionConfig/);
+    expect(() => planCollectionShutdown([{ id: "t2", collectionConfig: { enabled: false } }], "t2")).toThrow();
+  });
+
   it("他の topic の collectionConfig が壊れていても無関係", () => {
     expect(planCollectionShutdown([{ id: "t1", collectionConfig: null }, enabledTopic("t2")], "t2").plans).toHaveLength(1);
   });

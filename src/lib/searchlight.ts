@@ -90,6 +90,8 @@ export function planCollectionShutdown(
     // 会社には複数事例のトピックが同居するため、指定トピック以外は止めない。
     if (!isRecord(t) || t.id !== topicId) continue;
     topicFound = true;
+    // collectionConfig は OpenAPI 上任意。無いのは自動収集を設定していないトピックなので止める対象なし
+    if (t.collectionConfig === undefined) continue;
     const cc = asTopicConfig(t.collectionConfig);
     // 形が読めないまま「止める対象なし」とすると、収集中でも停止済みと記録されてしまう
     if (!cc) throw new Error(`topic ${topicId} の collectionConfig が想定外の形で、収集状態を判定できない`);
