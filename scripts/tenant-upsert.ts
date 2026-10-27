@@ -2,13 +2,15 @@
  * 事例（テナント）の作成・更新スクリプト。
  *
  * 実行: pnpm exec tsx --env-file=.env.local scripts/tenant-upsert.ts tenants/examples/disaster.example.json
+ *       [--topic-stopped-in-searchlight]
  *
  * JSON を検証 → マイグレーション → tenants テーブルへ upsert → Blob の公開設定と事例一覧を更新する。
- * 同じ slug を再実行すれば設定の更新になる（searchlight_stopped_at は upsert が触らない）。
+ * 同じ slug を再実行すれば設定の更新になる（searchlight_stopped_at は topic の差し替えと終了日の延長でだけ消える）。
  * DATABASE_URL と BLOB_READ_WRITE_TOKEN が指す先に実際に書くので、対象環境を確認してから流すこと。
  */
 import { readFileSync } from "node:fs";
 import { z } from "zod";
+import { appTitleSchema, githubRepoSchema, httpUrlSchema } from "../src/lib/tenant/fields";
 import { isValidSlug } from "../src/lib/tenant/slug";
 import type { TenantRecord } from "../src/lib/tenant/types";
 
@@ -41,11 +43,11 @@ const settingsSchema = z
     keyMoments: z.array(z.object({ at: z.number(), markerLabel: z.string() }).strict()),
     keyMomentLabel: z.string(),
     keyMomentValue: z.string(),
-    githubRepo: z.string(),
-    appTitle: z.string(),
-    issuesUrl: z.string(),
+    githubRepo: githubRepoSchema,
+    appTitle: appTitleSchema,
+    issuesUrl: httpUrlSchema,
     officialSourcesIntro: z.string(),
-    officialSources: z.array(z.object({ label: nonEmpty, url: z.url() }).strict()),
+    officialSources: z.array(z.object({ label: nonEmpty, url: httpUrlSchema }).strict()),
     officialSourcesDisclaimer: z.string(),
     searchlightTopicId: z.string().min(1).nullable(),
   })
@@ -93,10 +95,37 @@ export function parseTenantInput(raw: unknown): TenantInput {
   return inputSchema.parse(raw);
 }
 
+export const TOPIC_STOPPED_FLAG = "--topic-stopped-in-searchlight";
+
+/**
+ * 純関数。収集中かもしれない topic を設定から外そうとしていれば、拒否の理由を返す。
+ * 外すと searchlight-stop の対象から消え（index の hasSearchlight / topic の差し替え）、旧 topic の
+ * 収集＝課金を誰も止めなくなる。停止の記録（searchlight_stopped_at）があれば止まっているので通す。
+ */
+export function topicRemovalRefusal(
+  existing: Pick<TenantRecord, "settings" | "searchlightStoppedAt"> | null,
+  input: TenantInput,
+  stoppedInSearchlight: boolean,
+): string | null {
+  if (existing === null) return null;
+  const oldTopic = existing.settings.searchlightTopicId;
+  if (oldTopic === null || oldTopic === input.settings.searchlightTopicId) return null;
+  if (existing.searchlightStoppedAt !== null || stoppedInSearchlight) return null;
+  return [
+    `searchlightTopicId を ${oldTopic} から ${String(input.settings.searchlightTopicId)} に変えようとしていますが、`,
+    "旧 topic の収集停止が記録されていません（searchlight_stopped_at が空）。このまま変えると旧 topic の収集＝課金が止まりません。",
+    "終了日の翌日以降に searchlight-stop が停止を記録するのを待ってから流し直すか、",
+    `Searchlight のコンソールで旧 topic の収集を止めたうえで ${TOPIC_STOPPED_FLAG} を付けて流し直してください。`,
+  ].join("\n");
+}
+
 async function main(): Promise<void> {
-  const file = process.argv[2];
+  const args = process.argv.slice(2);
+  const file = args.find((a) => !a.startsWith("--"));
   if (file === undefined) {
-    console.error("使い方: pnpm exec tsx --env-file=.env.local scripts/tenant-upsert.ts <file.json>");
+    console.error(
+      `使い方: pnpm exec tsx --env-file=.env.local scripts/tenant-upsert.ts <file.json> [${TOPIC_STOPPED_FLAG}]`,
+    );
     process.exit(1);
   }
   const input = parseTenantInput(JSON.parse(readFileSync(file, "utf8")));
@@ -107,10 +136,21 @@ async function main(): Promise<void> {
   const { publishTenant } = await import("../src/lib/tenant/publish");
 
   await migrate();
+  const refusal = topicRemovalRefusal(await getTenant(input.slug), input, args.includes(TOPIC_STOPPED_FLAG));
+  if (refusal !== null) {
+    console.error(refusal);
+    process.exit(1);
+  }
   await upsertTenant(input);
   const saved = await getTenant(input.slug);
   if (saved === null) throw new Error(`upsert 後に事例が読めません: ${input.slug}`);
-  await publishTenant(saved);
+  try {
+    await publishTenant(saved);
+  } catch (e) {
+    console.error("DB には反映済み・Blob は未反映。同じコマンドを再実行してください");
+    console.error(e);
+    process.exit(1);
+  }
   console.log(`事例 ${saved.slug}（${saved.type} / ${saved.status}）を反映しました`);
 }
 

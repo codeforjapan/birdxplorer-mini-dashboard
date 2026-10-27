@@ -31,7 +31,7 @@ const S: TenantSettings = {
 };
 
 function cfgOf(type: TenantTypeId): TenantConfig {
-  return resolveTenantConfig({ type, status: "active", settings: S, overrides: {} });
+  return resolveTenantConfig({ slug: S.slug, type, status: "active", settings: S, overrides: {} });
 }
 
 describe("buildRelevanceSystemPrompt", () => {
@@ -46,7 +46,7 @@ describe("buildRelevanceSystemPrompt", () => {
   });
 
   it("災害型(score): 閾値を上書きするとプロンプトの境界値も変わる", () => {
-    const cfg = resolveTenantConfig({ type: "disaster", status: "active", settings: S, overrides: { relevanceThreshold: 70 } });
+    const cfg = resolveTenantConfig({ slug: S.slug, type: "disaster", status: "active", settings: S, overrides: { relevanceThreshold: 70 } });
     const p = buildRelevanceSystemPrompt(cfg);
     expect(p).toContain("70以上");
     expect(p).toContain("70未満");

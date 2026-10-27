@@ -29,20 +29,21 @@ const S: TenantSettings = {
 
 describe("resolveTenantConfig", () => {
   it("上書きの無い項目は型の値を使う", () => {
-    const cfg = resolveTenantConfig({ type: "disaster", status: "active", settings: S, overrides: {} });
+    const cfg = resolveTenantConfig({ slug: "test", type: "disaster", status: "active", settings: S, overrides: {} });
     expect(cfg.taxonomy).toEqual(TENANT_PRESETS.disaster.taxonomy);
     expect(cfg.binMinutes).toBe(30);
     expect(cfg.relevanceMode).toBe("score");
     expect(cfg.relevanceThreshold).toBe(60);
   });
   it("選挙型は二値判定・1440分ビン・中立性ルールあり", () => {
-    const cfg = resolveTenantConfig({ type: "election", status: "active", settings: S, overrides: {} });
+    const cfg = resolveTenantConfig({ slug: "test", type: "election", status: "active", settings: S, overrides: {} });
     expect(cfg.relevanceMode).toBe("binary");
     expect(cfg.binMinutes).toBe(1440);
     expect(cfg.taxonomy.namingNeutralityRule).not.toBeNull();
   });
   it("taxonomy の上書きは項目単位でマージする", () => {
     const cfg = resolveTenantConfig({
+      slug: "test",
       type: "disaster",
       status: "active",
       settings: S,
@@ -53,12 +54,26 @@ describe("resolveTenantConfig", () => {
   });
   it("空文字の上書きは無視する（Review Focus 5）", () => {
     const cfg = resolveTenantConfig({
+      slug: "test",
       type: "disaster",
       status: "active",
       settings: S,
       overrides: { taxonomy: { relevantExamples: "  " } },
     });
     expect(cfg.taxonomy.relevantExamples).toBe(TENANT_PRESETS.disaster.taxonomy.relevantExamples);
+  });
+});
+
+describe("resolveTenantConfig の slug", () => {
+  it("settings.slug ではなく行の slug を使う", () => {
+    const cfg = resolveTenantConfig({
+      slug: "row-slug",
+      type: "disaster",
+      status: "active",
+      settings: { ...S, slug: "settings-slug" },
+      overrides: {},
+    });
+    expect(cfg.slug).toBe("row-slug");
   });
 });
 
@@ -82,6 +97,7 @@ describe("toPublicConfig", () => {
   it("toPublicConfig は taxonomy・searchlightTopicId・githubRepo を含めない", () => {
     const pub = toPublicConfig(
       resolveTenantConfig({
+        slug: "test",
         type: "election",
         status: "active",
         settings: { ...S, searchlightTopicId: "t1" },

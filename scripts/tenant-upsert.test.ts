@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { parseTenantInput } from "./tenant-upsert";
+import { parseTenantInput, topicRemovalRefusal } from "./tenant-upsert";
+import type { TenantInput } from "./tenant-upsert";
 
 function load(name: string): Record<string, unknown> {
   return JSON.parse(readFileSync(`tenants/examples/${name}.example.json`, "utf8")) as Record<string, unknown>;
@@ -43,5 +44,57 @@ describe("parseTenantInput", () => {
 
   it("オブジェクト以外は例外", () => {
     expect(() => parseTenantInput(null)).toThrow();
+  });
+
+  it("appTitle は印字可能な ASCII だけ（X-Title ヘッダに入るため）", () => {
+    for (const appTitle of ["熊本ダッシュボード", "a\nb", ""]) {
+      expect(() => parseTenantInput(withSettings(load("disaster"), { appTitle }))).toThrow();
+    }
+    expect(parseTenantInput(withSettings(load("disaster"), { appTitle: "My App (v2)" })).settings.appTitle).toBe(
+      "My App (v2)",
+    );
+  });
+
+  it("githubRepo は owner/repo の形だけ", () => {
+    for (const githubRepo of ["repo", "a/b/c", "https://github.com/a/b", "a/b?x=1", ""]) {
+      expect(() => parseTenantInput(withSettings(load("disaster"), { githubRepo }))).toThrow();
+    }
+  });
+
+  it("issuesUrl・officialSources の URL は http(s) だけ", () => {
+    for (const url of ["javascript:alert(1)", "ftp://example.com", "not a url"]) {
+      expect(() => parseTenantInput(withSettings(load("disaster"), { issuesUrl: url }))).toThrow();
+      expect(() =>
+        parseTenantInput(withSettings(load("disaster"), { officialSources: [{ label: "公式", url }] })),
+      ).toThrow();
+    }
+    expect(() => parseTenantInput(withSettings(load("disaster"), { issuesUrl: "http://example.com/i" }))).not.toThrow();
+  });
+});
+
+describe("topicRemovalRefusal", () => {
+  const input = (topic: string | null): TenantInput => {
+    const base = parseTenantInput(load("disaster"));
+    return { ...base, settings: { ...base.settings, searchlightTopicId: topic } };
+  };
+  const existing = (topic: string | null, stoppedAt: number | null) => ({
+    settings: input(topic).settings,
+    searchlightStoppedAt: stoppedAt,
+  });
+
+  it("新規・topic 不変・元が null なら通す", () => {
+    expect(topicRemovalRefusal(null, input("t1"), false)).toBeNull();
+    expect(topicRemovalRefusal(existing("t1", null), input("t1"), false)).toBeNull();
+    expect(topicRemovalRefusal(existing(null, null), input("t1"), false)).toBeNull();
+  });
+
+  it("停止の記録が無いまま topic を外す・差し替えるのは拒否する", () => {
+    expect(topicRemovalRefusal(existing("t1", null), input(null), false)).toContain("searchlight-stop");
+    expect(topicRemovalRefusal(existing("t1", null), input("t2"), false)).toContain("t1");
+  });
+
+  it("停止済みの記録があるか、Searchlight で止めたと明示すれば通す", () => {
+    expect(topicRemovalRefusal(existing("t1", 123), input(null), false)).toBeNull();
+    expect(topicRemovalRefusal(existing("t1", null), input(null), true)).toBeNull();
   });
 });

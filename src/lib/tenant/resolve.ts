@@ -20,12 +20,14 @@ function mergeTaxonomy(base: Taxonomy, override: Partial<Taxonomy> | undefined):
 }
 
 export function resolveTenantConfig(
-  rec: Pick<TenantRecord, "type" | "status" | "settings" | "overrides">,
+  rec: Pick<TenantRecord, "slug" | "type" | "status" | "settings" | "overrides">,
 ): TenantConfig {
   const preset = TENANT_PRESETS[rec.type];
   const o = rec.overrides;
   return {
     ...rec.settings,
+    // 事例の識別は行の slug を正とする（settings.slug との食い違いは repo が読み出し時に弾く）
+    slug: rec.slug,
     type: rec.type,
     status: rec.status,
     taxonomy: mergeTaxonomy(preset.taxonomy, o.taxonomy),

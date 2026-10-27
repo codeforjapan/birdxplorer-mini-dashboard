@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { bigintToNumber, nullableBigintToNumber, parseJsonbMaybe, sql } from "../db";
+import { appTitleSchema, githubRepoSchema, httpUrlSchema } from "./fields";
 import type { TenantOverrides, TenantRecord, TenantSettings } from "./types";
 
 /**
@@ -9,7 +10,7 @@ import type { TenantOverrides, TenantRecord, TenantSettings } from "./types";
  */
 
 const keyMomentSchema = z.object({ at: z.number(), markerLabel: z.string() });
-const officialSourceSchema = z.object({ label: z.string(), url: z.string() });
+const officialSourceSchema = z.object({ label: z.string(), url: httpUrlSchema });
 
 const settingsSchema: z.ZodType<TenantSettings> = z.object({
   slug: z.string(),
@@ -26,9 +27,9 @@ const settingsSchema: z.ZodType<TenantSettings> = z.object({
   keyMoments: z.array(keyMomentSchema),
   keyMomentLabel: z.string(),
   keyMomentValue: z.string(),
-  githubRepo: z.string(),
-  appTitle: z.string(),
-  issuesUrl: z.string(),
+  githubRepo: githubRepoSchema,
+  appTitle: appTitleSchema,
+  issuesUrl: httpUrlSchema,
   officialSourcesIntro: z.string(),
   officialSources: z.array(officialSourceSchema),
   officialSourcesDisclaimer: z.string(),
@@ -68,11 +69,16 @@ const rowSchema = z.object({
 
 function toRecord(raw: unknown): TenantRecord {
   const row = rowSchema.parse(raw);
+  const settings = settingsSchema.parse(parseJsonbMaybe(row.settings));
+  // slug は Blob のパスにもサブドメインにも入る。食い違ったまま読むと別の事例の場所に書きかねない
+  if (settings.slug !== row.slug) {
+    throw new Error(`tenants.slug（${row.slug}）と settings.slug（${settings.slug}）が一致しません`);
+  }
   return {
     slug: row.slug,
     type: row.type,
     status: row.status,
-    settings: settingsSchema.parse(parseJsonbMaybe(row.settings)),
+    settings,
     overrides: overridesSchema.parse(parseJsonbMaybe(row.overrides)),
     searchlightStoppedAt: nullableBigintToNumber(row.searchlight_stopped_at),
     updatedAt: bigintToNumber(row.updated_at),
@@ -90,8 +96,10 @@ export async function listTenants(): Promise<TenantRecord[]> {
 }
 
 /**
- * 設定を作成または更新する。searchlight_stopped_at は上書きしない
+ * 設定を作成または更新する。searchlight_stopped_at は原則上書きしない
  * （終了処理の記録であり、設定編集で消えると Searchlight を二重に止める／止め忘れる）。
+ * ただし topic を差し替えたときと終了日を延ばしたときは消す。前者は新しい topic をまだ止めておらず、
+ * 後者は再開した収集を次の終了時にまた止める必要があるため。
  */
 export async function upsertTenant(
   rec: Omit<TenantRecord, "updatedAt" | "searchlightStoppedAt">,
@@ -105,7 +113,13 @@ export async function upsertTenant(
       status = excluded.status,
       settings = excluded.settings,
       overrides = excluded.overrides,
-      updated_at = excluded.updated_at`;
+      updated_at = excluded.updated_at,
+      searchlight_stopped_at = case
+        when (tenants.settings->>'searchlightTopicId') is distinct from (excluded.settings->>'searchlightTopicId')
+          or (excluded.settings->>'monitorEndDate') > (tenants.settings->>'monitorEndDate')
+        then null
+        else tenants.searchlight_stopped_at
+      end`;
 }
 
 export async function markSearchlightStopped(slug: string, at: number): Promise<void> {

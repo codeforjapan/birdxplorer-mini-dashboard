@@ -86,6 +86,36 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("tenant repo（実 DB）", () =>
     expect(got?.searchlightStoppedAt).toBe(12345);
   });
 
+  it("topic を差し替えると searchlight_stopped_at を消す（新しい topic はまだ止めていない）", async () => {
+    await repo.upsertTenant({ ...rec, settings: { ...settings, searchlightTopicId: "t1" } });
+    await repo.markSearchlightStopped("repo-test", 12345);
+    await repo.upsertTenant({ ...rec, settings: { ...settings, searchlightTopicId: "t2" } });
+    expect((await repo.getTenant("repo-test"))?.searchlightStoppedAt).toBeNull();
+  });
+
+  it("終了日を延ばすと消し、縮める・据え置きなら残す", async () => {
+    await repo.upsertTenant(rec);
+    await repo.markSearchlightStopped("repo-test", 12345);
+    await repo.upsertTenant({ ...rec, settings: { ...settings, monitorEndDate: "2026-09-10" } });
+    expect((await repo.getTenant("repo-test"))?.searchlightStoppedAt).toBe(12345);
+    await repo.upsertTenant({ ...rec, settings: { ...settings, monitorEndDate: "2026-09-10" } });
+    expect((await repo.getTenant("repo-test"))?.searchlightStoppedAt).toBe(12345);
+    await repo.upsertTenant({ ...rec, settings: { ...settings, monitorEndDate: "2026-10-01" } });
+    expect((await repo.getTenant("repo-test"))?.searchlightStoppedAt).toBeNull();
+  });
+
+  it("行の slug と settings.slug が食い違う行は読み出しで例外", async () => {
+    await repo.upsertTenant({ ...rec, settings: { ...settings, slug: "other" } });
+    await expect(repo.getTenant("repo-test")).rejects.toThrow(/一致しません/);
+  });
+
+  it("appTitle・githubRepo・URL の制約は読み出しにもかかる", async () => {
+    await repo.upsertTenant({ ...rec, settings: { ...settings, appTitle: "熊本" } });
+    await expect(repo.getTenant("repo-test")).rejects.toThrow();
+    await repo.upsertTenant({ ...rec, settings: { ...settings, issuesUrl: "javascript:alert(1)" } });
+    await expect(repo.getTenant("repo-test")).rejects.toThrow();
+  });
+
   it("listTenants に含まれる", async () => {
     await repo.upsertTenant(rec);
     const slugs = (await repo.listTenants()).map((t) => t.slug);

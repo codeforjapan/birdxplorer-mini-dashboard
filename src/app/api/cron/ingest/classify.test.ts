@@ -42,7 +42,7 @@ const S: TenantSettings = {
 };
 
 function cfgOf(type: TenantTypeId): TenantConfig {
-  return resolveTenantConfig({ type, status: "active", settings: S, overrides: {} });
+  return resolveTenantConfig({ slug: S.slug, type, status: "active", settings: S, overrides: {} });
 }
 
 const candidates = [

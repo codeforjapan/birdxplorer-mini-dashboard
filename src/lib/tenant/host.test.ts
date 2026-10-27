@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { parseHostRules, resolveSlugFromHost } from "./host";
 
 const rules = {
@@ -58,5 +58,42 @@ describe("parseHostRules", () => {
 
   it("空の親ドメインは未設定として扱う", () => {
     expect(parseHostRules({ TENANT_PARENT_DOMAIN: "" }).parentDomain).toBeNull();
+  });
+});
+
+describe("parseHostRules の警告", () => {
+  // 警告済みの印はモジュールに1つなので、テストごとに読み込み直す
+  async function fresh(): Promise<typeof import("./host")> {
+    vi.resetModules();
+    return import("./host");
+  }
+
+  it("捨てた設定をインスタンスにつき1回だけログに出す", async () => {
+    const { parseHostRules: parse } = await fresh();
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    parse({ TENANT_PARENT_DOMAIN: "p.example", TENANT_HOST_ALIASES: JSON.stringify({ "x.example": "../etc" }) });
+    parse({ TENANT_HOST_ALIASES: "not json" });
+    expect(error).toHaveBeenCalledOnce();
+    expect(String(error.mock.calls[0]?.[0])).toContain("x.example");
+    error.mockRestore();
+  });
+
+  it("壊れた JSON・親ドメイン未設定を伝える", async () => {
+    const { parseHostRules: parse } = await fresh();
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    parse({ TENANT_HOST_ALIASES: "not json" });
+    const msg = String(error.mock.calls[0]?.[0]);
+    expect(msg).toContain("TENANT_PARENT_DOMAIN");
+    expect(msg).toContain("JSON");
+    error.mockRestore();
+  });
+
+  it("正しい設定なら何も出さない", async () => {
+    const { parseHostRules: parse } = await fresh();
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    parse({ TENANT_PARENT_DOMAIN: "p.example", TENANT_HOST_ALIASES: JSON.stringify({ "a.example": "a" }) });
+    parse({ TENANT_PARENT_DOMAIN: "p.example" });
+    expect(error).not.toHaveBeenCalled();
+    error.mockRestore();
   });
 });
