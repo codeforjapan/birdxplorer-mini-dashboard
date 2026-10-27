@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   puts: [] as string[],
   markSearchlightStopped: vi.fn(),
   publishTenant: vi.fn(),
+  hasConfig: true,
   body: null as TenantJobBody | null,
 }));
 
@@ -19,7 +20,7 @@ vi.mock("@/lib/cron", () => ({
   },
 }));
 vi.mock("@/lib/env", () => ({
-  hasSearchlightConfig: () => true,
+  hasSearchlightConfig: () => mocks.hasConfig,
   searchlightEnv: () => ({ SEARCHLIGHT_COMPANY_ID: "co1" }),
 }));
 vi.mock("@/lib/searchlight-http", () => ({
@@ -70,10 +71,10 @@ const rec: TenantRecord = {
   updatedAt: 1,
 };
 
-async function run(): Promise<Record<string, number>> {
+async function run(r: TenantRecord = rec): Promise<Record<string, number>> {
   await GET(new Request("https://example.com"));
   if (mocks.body === null) throw new Error("body が渡されていない");
-  return mocks.body(resolveTenantConfig(rec), rec);
+  return mocks.body(resolveTenantConfig(r), r);
 }
 
 const topic = (id: string, enabled: boolean) => ({
@@ -86,6 +87,7 @@ describe("searchlight-stop", () => {
     mocks.puts.length = 0;
     mocks.markSearchlightStopped.mockReset();
     mocks.publishTenant.mockReset();
+    mocks.hasConfig = true;
   });
 
   it("有効なトピックを止めて停止済みと記録する", async () => {
@@ -103,14 +105,28 @@ describe("searchlight-stop", () => {
     expect(mocks.markSearchlightStopped).toHaveBeenCalledOnce();
   });
 
-  it("トピックが一覧に無ければ停止済みと記録しない", async () => {
+  it("トピックが一覧に無ければ失敗にし、停止済みと記録しない", async () => {
     mocks.topics = [topic("t1", true)];
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    expect(await run()).toMatchObject({ topicNotFound: 1 });
-    expect(error).toHaveBeenCalledOnce();
+    await expect(run()).rejects.toThrow(/t2 が会社のトピック一覧に無い/);
     expect(mocks.puts).toEqual([]);
     expect(mocks.markSearchlightStopped).not.toHaveBeenCalled();
     expect(mocks.publishTenant).not.toHaveBeenCalled();
-    error.mockRestore();
+  });
+
+  it("collectionConfig の形が読めなければ失敗にし、停止済みと記録しない", async () => {
+    mocks.topics = [{ id: "t2", collectionConfig: { enabled: "yes" } }];
+    await expect(run()).rejects.toThrow(/collectionConfig/);
+    expect(mocks.markSearchlightStopped).not.toHaveBeenCalled();
+  });
+
+  it("topic の無い事例は skip", async () => {
+    const noTopic = { ...rec, settings: { ...settings, searchlightTopicId: null } };
+    expect(await run(noTopic)).toEqual({ skipped: 1 });
+  });
+
+  it("topic があるのに Searchlight の環境変数が無ければ skip ではなく失敗", async () => {
+    mocks.hasConfig = false;
+    await expect(run()).rejects.toThrow(/環境変数が未設定/);
+    expect(mocks.markSearchlightStopped).not.toHaveBeenCalled();
   });
 });

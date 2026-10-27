@@ -43,6 +43,15 @@ describe("planCollectionShutdown", () => {
   it("指定 topic が一覧に無ければ topicFound=false（既に無効とは区別する）", () => {
     expect(planCollectionShutdown([enabledTopic("t1")], "typo")).toEqual({ topicFound: false, plans: [] });
   });
+
+  it("指定 topic の collectionConfig が読めなければ例外（止める対象なしと誤認しない）", () => {
+    expect(() => planCollectionShutdown([{ id: "t2", collectionConfig: null }], "t2")).toThrow(/collectionConfig/);
+    expect(() => planCollectionShutdown([{ id: "t2", collectionConfig: { enabled: true } }], "t2")).toThrow();
+  });
+
+  it("他の topic の collectionConfig が壊れていても無関係", () => {
+    expect(planCollectionShutdown([{ id: "t1", collectionConfig: null }, enabledTopic("t2")], "t2").plans).toHaveLength(1);
+  });
 });
 
 describe("topic 絞り込み", () => {

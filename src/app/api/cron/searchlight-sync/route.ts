@@ -33,10 +33,12 @@ export async function GET(req: Request): Promise<Response> {
     "searchlight-sync",
     req,
     async (cfg): Promise<Record<string, number>> => {
-      // Searchlight は任意の拡張機能。topic を持たない事例・未設定環境では無害に skip する。
+      // Searchlight は任意の拡張機能。topic を持たない事例では無害に skip する。
       // ゲート側に移さないのは、この場合は Searchlight を1回も叩かない＝間隔の窓が
       // ずれても無害であり、レスポンスの形（stats.skipped）を変える理由がないため。
-      if (cfg.searchlightTopicId === null || !hasSearchlightConfig()) return { skipped: 1 };
+      if (cfg.searchlightTopicId === null) return { skipped: 1 };
+      // topic があるのに資格情報が無いのは設定漏れ。skip にすると取り込みが止まっていることに気づけない
+      if (!hasSearchlightConfig()) throw new Error("searchlightTopicId があるのに Searchlight の環境変数が未設定");
 
       const now = Date.now();
 
@@ -80,7 +82,7 @@ export async function GET(req: Request): Promise<Response> {
       return { upserted: x.rows.length, crossUpserted, requests: session.requestCount, truncated };
     },
     async (cfg) => {
-      // topic なし・未設定環境は body 側で無害に skip させる。ここで DB を
+      // topic なし・未設定環境は body 側で skip／失敗させる。ここで DB を
       // 読んで "too-soon" を返すと、Searchlight を1回も叩かない事例のレスポンスの形が
       // 理由なく変わる。窓がずれても呼び出しは0なので、ゲートを通す方が副作用が小さい。
       if (cfg.searchlightTopicId === null || !hasSearchlightConfig()) return null;

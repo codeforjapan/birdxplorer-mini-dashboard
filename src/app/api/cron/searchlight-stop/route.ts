@@ -19,17 +19,16 @@ export const maxDuration = 60;
  */
 export async function GET(req: Request): Promise<Response> {
   return runTenantShutdownJob("searchlight-stop", req, async (cfg, rec): Promise<Record<string, number>> => {
-    if (cfg.searchlightTopicId === null || !hasSearchlightConfig()) return { skipped: 1 };
+    if (cfg.searchlightTopicId === null) return { skipped: 1 };
+    // topic があるのに資格情報が無いのは設定漏れ。skip で 200 にすると収集＝課金が続いていることに気づけない
+    if (!hasSearchlightConfig()) throw new Error("searchlightTopicId があるのに Searchlight の環境変数が未設定");
 
     const session = createSession();
     const { topicFound, topicsDisabled } = await disableCollection(session, cfg.searchlightTopicId);
     if (!topicFound) {
       // 停止済みと記録すると以後止めに行かなくなる。topic ID の誤記なら本物のトピックが課金され続けるので、
-      // 記録せずに毎日ここで叫び続ける
-      console.error(
-        `[searchlight-stop] ${cfg.slug}: topic ${cfg.searchlightTopicId} が会社のトピック一覧に無い。停止済みとは記録しない`,
-      );
-      return { topicNotFound: 1, requests: session.requestCount };
+      // 記録せずに失敗として残し、毎日ここで失敗し続ける
+      throw new Error(`topic ${cfg.searchlightTopicId} が会社のトピック一覧に無い。停止済みとは記録しない`);
     }
 
     // 停止を記録して index.json を作り直し、以後 dispatch の対象から外す（設計書 §5.4）。

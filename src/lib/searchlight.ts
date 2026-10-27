@@ -91,7 +91,8 @@ export function planCollectionShutdown(
     if (!isRecord(t) || t.id !== topicId) continue;
     topicFound = true;
     const cc = asTopicConfig(t.collectionConfig);
-    if (!cc) continue;
+    // 形が読めないまま「止める対象なし」とすると、収集中でも停止済みと記録されてしまう
+    if (!cc) throw new Error(`topic ${topicId} の collectionConfig が想定外の形で、収集状態を判定できない`);
     const anyEnabled = cc.enabled || cc.platforms.some((p) => p.enabled === true);
     if (!anyEnabled) continue;
     plans.push({
