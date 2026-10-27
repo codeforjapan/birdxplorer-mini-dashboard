@@ -35,7 +35,7 @@ Neon Postgres が唯一の真実。Vercel Blob はそこから書き出す公開
 
 ## マルチテナント
 
-1つのデプロイで複数の事例を動かす。Blob は `tenants/{slug}/…`、DB は全テーブルが `tenant_id` を持つ。ホスト名から事例を引き、未登録のホストは 404（既定の事例に落とさない）。cron は `/api/cron/dispatch/{job}` が事例ごとに作業ルートを呼ぶ。事例の作成は `scripts/tenant-upsert.ts`、手順は [`docs/tenant-runbook.md`](docs/tenant-runbook.md)。**`main` にマージする前に Vercel の `kumamoto-earthquake-dashboard` の Git 連携を外すこと**（runbook §0）。
+1つのデプロイで複数の事例を動かす。Blob は `tenants/{slug}/…`、DB は全テーブルが `tenant_id` を持つ。ホスト名から事例を引き、未登録のホストと `draft` の事例は 404（既定の事例に落とさない）。cron は `/api/cron/dispatch/{job}` が事例ごとに作業ルートを呼ぶ。事例の作成は `scripts/tenant-upsert.ts`、手順は [`docs/tenant-runbook.md`](docs/tenant-runbook.md)。**`main` にマージする前に Vercel の `kumamoto-earthquake-dashboard` の Git 連携を外すこと**（runbook §0）。
 
 ## 絶対に永続化しないもの
 

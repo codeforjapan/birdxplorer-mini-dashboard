@@ -35,6 +35,7 @@
    `CRON_SELF_ORIGIN` を本番ドメインにする理由: Deployment Protection が `all_except_custom_domains` のため、デプロイ固有 URL（`*.vercel.app`）への自己呼び出しは SSO で弾かれる。dispatch は事例ごとの作業ルートをこの origin 経由で呼ぶ。
 5. **ドメイン**: `CRON_SELF_ORIGIN` に使うカスタムドメインをプロジェクトに追加しておく（手順は §3）
 6. デプロイする。DB のスキーマは、cron 実行時と `tenant-upsert` 実行時の `migrate()` で作られる（`schema_migrations` に記録され1回だけ流れる）
+7. **最初の事例を §2 で作るまで、dispatch は毎回 500 になる**。`tenants/index.json` は `tenant-upsert` が初めて書くもので、無い状態を「事例0件」とは扱わない（読めないのを空と扱うと、障害時に全事例の cron が黙って止まるため）。draft の事例を1件作れば止まる
 
 ## 2. 新しい事例を立ち上げる
 
@@ -43,10 +44,11 @@
 1. **JSON を書く**: `tenants/examples/disaster.example.json`（災害）または `election.example.json`（選挙）をコピーして編集する。形は `Omit<TenantRecord, "updatedAt" | "searchlightStoppedAt">`
    - `slug`: 小文字英数とハイフン、1〜42文字。サブドメインと Blob のパスに入る。`settings.slug` と一致させる
    - `type`: `disaster` / `election`。分類プロンプトと関連性判定の既定値が型で決まる
-   - `status`: `draft`（作業中・収集しない）/ `active` / `ended`
+   - `status`: `draft`（作業中・収集しない・公開ページも 404）/ `active` / `ended`
    - `settings.monitorStartAt`: epoch ms。`monitorEndDate`: `YYYY-MM-DD`（JST）。この日いっぱいが監視中で、翌日 00:00 JST から終了
    - `settings.searchKeywords`: 1語以上。OR・部分一致のゆるい検索語で、無関係なノートは関連性判定で弾く
    - `settings.searchlightTopicId`: Searchlight を使うときだけ。コンソールで topic を作り、その ID を貼る。使わなければ `null`
+   - `settings.appTitle`: 印字可能な ASCII だけ（OpenRouter に `X-Title` ヘッダとして送るため。日本語は不可）。`settings.githubRepo`: `owner/repo` の形。`settings.issuesUrl` と `officialSources[].url`: `http(s)://` の URL
    - `overrides`: 型の既定値の上書き（`relevanceMode` / `relevanceThreshold` / `binMinutes` / `taxonomy`）。空文字・空配列は「上書きしない」と同じ扱い
 
    > **注意: 型の既定 taxonomy は熊本・沖縄の文言のまま。** 災害型は熊本地震版（「熊本」「熊本関連」など）、選挙型は沖縄県知事選版（「沖縄」「知事」「辺野古移設」「普天間飛行場」「琉球」など）を出発点にしており、そのまま使うと別の事例の分類プロンプトに熊本・沖縄の地名や争点が混ざる。新しい事例では `overrides.taxonomy` で少なくとも次を上書きすること:
@@ -81,8 +83,9 @@
    ```
 
    検証 → `migrate()` → `tenants` に upsert → Blob の `tenants/{slug}/config.json` と `tenants/index.json` を更新、の順。同じ slug で流し直せば設定の更新になる。
+   Blob の更新で失敗すると「DB には反映済み・Blob は未反映」と出て終了コード 1 になる。同じコマンドをそのまま流し直せばよい（upsert も書き出しも冪等）。
 3. **ドメインを追加する**（§3）
-4. **表示を確認する**: `https://{slug}.<親ドメイン>/` を開く。登録の無いホストは 404 になる。`status` を `active` にすると、次の dispatch から収集が始まる（ingest は slug 順に5枠へ割り当てられ、最大10分で最初の実行が来る）
+4. **表示を確認する**: `https://{slug}.<親ドメイン>/` を開く。登録の無いホストと `draft` の事例は 404 になる（作業中の事例を公開しないため）。`draft` のうちは手元の `pnpm dev` で `?mock=1` を付ければ、その事例の設定とモックデータで見た目を確認できる。`status` を `active` にすると、次の dispatch から収集が始まる（ingest は slug 順に5枠へ割り当てられ、最大10分で最初の実行が来る）
 
    > **既知のリスク（ingest の枠ずれ）**: 枠は「監視中の事例を slug 順に並べたときの位置」で決まる。事例が監視を始める・終えると、それより後ろの事例の位置がずれて枠が変わり、その切り替わりの回に**同じ事例の ingest が約2分間隔で2回**走ることがある（1回の ingest が2分を超えると2本が重なる）。書き込みは upsert なので行は重複しないが、BirdXplorer API への重い検索と LLM 分類が一時的に二重に走り得る。事例の開始・終了はなるべく他事例の負荷が低い時間帯に行う
 
@@ -100,11 +103,15 @@ example の `kumamoto-example` / `okinawa-example` は雛形で、既存の熊�
 
 - `monitorEndDate` の翌日 00:00 JST に自動で終了扱いになる。dispatch は対象にしなくなり、Neon も起こさない。Blob の最終状態がそのまま配信され続ける
 - 早く止めたいときは JSON の `status` を `ended` にして §2 のスクリプトを流し直す。cron はその時点（`tenants/index.json` の反映後）で止まる。ただし公開ページの「監視終了」表示は `monitorEndDate` だけを見ており `status` を見ないので、`ended` にしても終了日を過ぎるまでは監視中の表示のまま。表示も終了にしたいときは `monitorEndDate` も合わせて流す（終了日の翌日 00:00 JST から表示されるので、すぐ出したいなら前日の日付、翌日からでよければ当日の日付。表示される終了日もこの値になる）
-- Searchlight の収集停止は `searchlight-stop`（毎日）が事例単位で1度だけ行い、`searchlight_stopped_at` に記録する。upsert はこの値を上書きしない
+- Searchlight の収集停止は `searchlight-stop`（毎日）が事例単位で1度だけ行い、`searchlight_stopped_at` に記録する。upsert はこの値を原則上書きしないが、`searchlightTopicId` を変えたときと `monitorEndDate` を後ろに延ばしたときは消す（新しい topic・再開した収集を、次の終了時にまた止めるため）
+- topic が一覧に無い・`collectionConfig` の形が読めない・topic があるのに `SEARCHLIGHT_*` が未設定のときは、`searchlight-stop` / `searchlight-sync` は失敗（500・`job_runs.ok=false`）になり、停止済みとは記録しない。毎日失敗し続けるので、原因を直すまで残る
+- **停止の記録が無いまま `searchlightTopicId` を外す・差し替えることはスクリプトが拒否する**（外すと `searchlight-stop` の対象から消え、旧 topic の収集＝課金を誰も止めなくなる）。終了日の翌日以降に `searchlight-stop` が停止を記録するのを待ってから流し直すか、Searchlight のコンソールで旧 topic の収集を止めたうえで `--topic-stopped-in-searchlight` を付けて流す
 - 終了後に Neon を止める場合も、公開ページは Blob だけで動く
 
 ## 5. 障害時の見方
 
-- 1事例が失敗しても他は止まらない。dispatch のレスポンスに全事例の結果が並ぶ（`status !== 200` の事例がログに出る）
-- dispatch 自体が 500: `tenants/index.json` が壊れている可能性。スクリプトを流し直すと全事例から作り直される
+- 1事例が失敗しても他は止まらない。dispatch のレスポンスに全事例の結果が並び、1件でも `status !== 200` があれば dispatch 自体が 502 を返す（失敗した事例はその応答が返った時点で1件ずつログに出る）
+- dispatch 自体が 500: `tenants/index.json` が無い・読めない・壊れている。無いのは事例を1件も作っていない環境（§1 手順7）。それ以外はスクリプトを流し直すと全事例から作り直される
+- 公開ページがエラーになる: `tenants/{slug}/config.json` が読めないか壊れている（ログに `[tenant-config]` で中身の違反箇所が出る）。404 にしないのは、一時的な障害で 404 がキャッシュされて生成済みのページが消えるのを防ぐため。スクリプトを流し直すと書き直される
+- 特定のホストだけ 404: `TENANT_PARENT_DOMAIN` / `TENANT_HOST_ALIASES` の不備は、インスタンスごとに1回 `[tenant-host]` でログに出る
 - 同じ事例の cron が動かない: `status` / `monitorEndDate` と、`tenants/index.json` の該当エントリを確認する

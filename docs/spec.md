@@ -20,8 +20,8 @@
 - **事例設定**: 監視期間（`monitorStartAt` / `monitorEndDate`）・検索キーワード・LLM の主語（`llmContextPhrase*`）・基準時刻（`keyMoments`）・フッターの一次情報などは、`src/lib/event.ts` ではなく Neon の `tenants` テーブルが持つ。分類プロンプトの判断基準は事例の型（`disaster` / `election`、`src/lib/tenant/presets.ts`）が既定値を持ち、事例ごとの `overrides`（空値は「上書きしない」）で調整する。作成・更新は `scripts/tenant-upsert.ts`（§11）。
 - **DB**: 全テーブルに `tenant_id`（`tenants.slug` への外部キー）を持ち、主キー・一意性・インデックスは `(tenant_id, …)` 起点。他の事例と同じ `note_id` が両方に存在しても、分類・クラスタ・除外は互いに影響しない。`migrations/006_tenants.sql` は新しい（空の）DB 専用。`migrate()` は適用済みを `schema_migrations` に記録して1回しか流さない。
 - **Blob**: 事例ごとに `tenants/{slug}/` 配下へ書く（§5.2）。事例一覧は `tenants/index.json`。
-- **ホスト → 事例**: `{slug}.<TENANT_PARENT_DOMAIN>`（直下1階層のみ・`www` 対象外）と `TENANT_HOST_ALIASES` の別名で引く。登録の無いホストは 404（既定の事例には落とさない）。
-- **cron の振り分け**: Vercel の cron は静的なので、`vercel.json` は `/api/cron/dispatch/{job}` だけを持つ。振り分け役は **DB に触らず** `tenants/index.json` から対象の事例を選び、`CRON_SELF_ORIGIN`（本番ドメイン）経由で事例ごとの作業ルート（`/api/cron/{job}?tenant={slug}`）を呼ぶ。1事例の失敗・遅延で他の事例が止まらず、全件の結果を返す。監視中でない事例（`draft`・終了日の翌日 00:00 JST 以降）は対象外で、Neon を起こさない。
+- **ホスト → 事例**: `{slug}.<TENANT_PARENT_DOMAIN>`（直下1階層のみ・`www` 対象外）と `TENANT_HOST_ALIASES` の別名で引く。登録の無いホストと `draft` の事例は 404（既定の事例には落とさない）。設定の不備は落とさずに無視し、インスタンスごとに1回ログに出す。公開設定 `config.json` が無いときだけ 404 にし、読めない・壊れているときはエラーにする（一時的な障害で 404 を ISR にキャッシュさせないため）。
+- **cron の振り分け**: Vercel の cron は静的なので、`vercel.json` は `/api/cron/dispatch/{job}` だけを持つ。振り分け役は **DB に触らず** `tenants/index.json` から対象の事例を選び、`CRON_SELF_ORIGIN`（本番ドメイン）経由で事例ごとの作業ルート（`/api/cron/{job}?tenant={slug}`）を呼ぶ。1事例の失敗・遅延で他の事例が止まらず、全件の結果を返す（1件でも 200 以外があれば 502）。監視中でない事例（`draft`・終了日の翌日 00:00 JST 以降）は対象外で、Neon を起こさない。
 - **ingest の時間差実行**: BirdXplorer API は重い検索を1回に2本受けるため、事例が同時に投げるとタイムアウトしやすい。ingest は **2分ごとの tick × 5枠**で回し、事例を slug 順に枠へ割り当てる（各事例は 10分ごと）。枠は分で決まるので cron が1分遅れても同じ枠に入る。
 - **関連性判定**: 型ごとに `score`（0-100 の閾値）か `binary`（二値）。
 
@@ -297,7 +297,7 @@ Blob store は **public アクセス**で作成する必要がある。アクセ
 
 **v2 のレイアウト**: 上表のパスはすべて `tenants/{slug}/` 配下に置く（`tenants/{slug}/data/notes.json`、`tenants/{slug}/reports/daily/…` など。`data/cross-posts.json` も同様）。事例ごとの公開設定は `tenants/{slug}/config.json`（秘密・内部値を含めない）、事例一覧は `tenants/index.json`（`publishTenant` が全事例から作り直す）。slug は Blob のパスとサブドメインに埋め込まれるため `src/lib/tenant/slug.ts` の規則で検証する。
 
-**サーバ側で Blob を読み戻す例外は2つだけ**: 日次レポート cron（累積レポートへの継ぎ足し。`src/app/api/cron/report/route.ts`）と、dispatch が使う `tenants/index.json`。後者は監視中でない事例のために DB を起こさないための選択で、常に最新が要るので ISR キャッシュを通さず読み、壊れていれば例外にする（空として扱うと全事例の cron が黙って止まる）。
+**サーバ側で Blob を読み戻す例外は2つだけ**: 日次レポート cron（累積レポートへの継ぎ足し。`src/app/api/cron/report/route.ts`）と、dispatch が使う `tenants/index.json`。後者は監視中でない事例のために DB を起こさないための選択で、常に最新が要るので ISR キャッシュを通さず読み、無い・読めない・壊れているときは例外にする（空として扱うと全事例の cron が黙って止まる）。最初の事例を作るまでは無いので dispatch は 500 になる。
 
 日次ダイジェストは確定後に書き換えない。累積レポートが継ぎ足しで劣化しても、一次記録はここに残る。永続URL `/report/2026-07-29` として公開する。
 
@@ -453,7 +453,7 @@ SEARCHLIGHT_*                 # 任意
 7. フロントエンド実装（`docs/design.md` に準拠）
 8. ~~ポリシーページ（匿名化方針・AI生成の明示・データ出典）~~ — **v1.1 で取りやめ。ページは作らない**（§8-3・§8-8 参照）。AI生成の明示のみ、レポートセクション内の常時表示として残す（§7）
 9. 8/31 の自動停止処理（v2: 事例設定の `monitorEndDate` の翌日 00:00 JST 以降は dispatch が対象にしない。Searchlight の収集停止は `searchlight-stop` が事例単位で行う）
-10. （v2）事例の作成・更新: `pnpm exec tsx --env-file=.env.local scripts/tenant-upsert.ts <file.json>`。検証 → `migrate()` → `upsertTenant` → `publishTenant`。JSON の雛形は `tenants/examples/`。手順は `docs/tenant-runbook.md`
+10. （v2）事例の作成・更新: `pnpm exec tsx --env-file=.env.local scripts/tenant-upsert.ts <file.json>`。検証 → `migrate()` → `upsertTenant` → `publishTenant`。`searchlight_stopped_at` は topic の差し替えと終了日の延長でだけ消え、停止の記録が無いまま topic を外す・差し替える変更は拒否する（runbook §4）。JSON の雛形は `tenants/examples/`。手順は `docs/tenant-runbook.md`
 
 ---
 
