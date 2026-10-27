@@ -98,8 +98,8 @@ export async function listTenants(): Promise<TenantRecord[]> {
 /**
  * 設定を作成または更新する。searchlight_stopped_at は原則上書きしない
  * （終了処理の記録であり、設定編集で消えると Searchlight を二重に止める／止め忘れる）。
- * ただし topic を差し替えたときと終了日を延ばしたときは消す。前者は新しい topic をまだ止めておらず、
- * 後者は再開した収集を次の終了時にまた止める必要があるため。
+ * ただし topic を差し替えたとき、終了日を延ばしたとき、ended から戻したときは消す。前者は新しい topic を
+ * まだ止めておらず、後の2つは再開した収集を次の終了時にまた止める必要があるため。
  */
 export async function upsertTenant(
   rec: Omit<TenantRecord, "updatedAt" | "searchlightStoppedAt">,
@@ -117,6 +117,7 @@ export async function upsertTenant(
       searchlight_stopped_at = case
         when (tenants.settings->>'searchlightTopicId') is distinct from (excluded.settings->>'searchlightTopicId')
           or (excluded.settings->>'monitorEndDate') > (tenants.settings->>'monitorEndDate')
+          or (tenants.status = 'ended' and excluded.status <> 'ended')
         then null
         else tenants.searchlight_stopped_at
       end`;

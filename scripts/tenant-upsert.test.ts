@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { parseTenantInput, topicRemovalRefusal } from "./tenant-upsert";
+import { parseTenantInput, topicRemovalRefusal, unreadableExistingRefusal } from "./tenant-upsert";
 import type { TenantInput } from "./tenant-upsert";
 
 function load(name: string): Record<string, unknown> {
@@ -91,10 +91,24 @@ describe("topicRemovalRefusal", () => {
   it("停止の記録が無いまま topic を外す・差し替えるのは拒否する", () => {
     expect(topicRemovalRefusal(existing("t1", null), input(null), false)).toContain("searchlight-stop");
     expect(topicRemovalRefusal(existing("t1", null), input("t2"), false)).toContain("t1");
+    // 誤記で一覧に無い topic は searchlight-stop が記録できないので、フラグで差し替える道を示す
+    expect(topicRemovalRefusal(existing("typo", null), input("t2"), false)).toMatch(/誤記[\s\S]*--topic-stopped-in-searchlight/);
   });
 
   it("停止済みの記録があるか、Searchlight で止めたと明示すれば通す", () => {
     expect(topicRemovalRefusal(existing("t1", 123), input(null), false)).toBeNull();
     expect(topicRemovalRefusal(existing("t1", null), input(null), true)).toBeNull();
+  });
+});
+
+describe("unreadableExistingRefusal", () => {
+  it("既存行が読めなければ拒否し、理由に読めなかった原因とフラグを含める", () => {
+    const msg = unreadableExistingRefusal(new Error("appTitle が不正"), false);
+    expect(msg).toContain("appTitle が不正");
+    expect(msg).toContain("--topic-stopped-in-searchlight");
+  });
+
+  it("Searchlight で止めたと明示すれば通す（行を上書きして直す）", () => {
+    expect(unreadableExistingRefusal(new Error("x"), true)).toBeNull();
   });
 });

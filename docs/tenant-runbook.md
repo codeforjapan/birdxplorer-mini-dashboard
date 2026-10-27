@@ -103,9 +103,11 @@ example の `kumamoto-example` / `okinawa-example` は雛形で、既存の熊�
 
 - `monitorEndDate` の翌日 00:00 JST に自動で終了扱いになる。dispatch は対象にしなくなり、Neon も起こさない。Blob の最終状態がそのまま配信され続ける
 - 早く止めたいときは JSON の `status` を `ended` にして §2 のスクリプトを流し直す。cron はその時点（`tenants/index.json` の反映後）で止まる。ただし公開ページの「監視終了」表示は `monitorEndDate` だけを見ており `status` を見ないので、`ended` にしても終了日を過ぎるまでは監視中の表示のまま。表示も終了にしたいときは `monitorEndDate` も合わせて流す（終了日の翌日 00:00 JST から表示されるので、すぐ出したいなら前日の日付、翌日からでよければ当日の日付。表示される終了日もこの値になる）
-- Searchlight の収集停止は `searchlight-stop`（毎日）が事例単位で1度だけ行い、`searchlight_stopped_at` に記録する。upsert はこの値を原則上書きしないが、`searchlightTopicId` を変えたときと `monitorEndDate` を後ろに延ばしたときは消す（新しい topic・再開した収集を、次の終了時にまた止めるため）
-- topic が一覧に無い・`collectionConfig` の形が読めない・topic があるのに `SEARCHLIGHT_*` が未設定のときは、`searchlight-stop` / `searchlight-sync` は失敗（500・`job_runs.ok=false`）になり、停止済みとは記録しない。毎日失敗し続けるので、原因を直すまで残る
-- **停止の記録が無いまま `searchlightTopicId` を外す・差し替えることはスクリプトが拒否する**（外すと `searchlight-stop` の対象から消え、旧 topic の収集＝課金を誰も止めなくなる）。終了日の翌日以降に `searchlight-stop` が停止を記録するのを待ってから流し直すか、Searchlight のコンソールで旧 topic の収集を止めたうえで `--topic-stopped-in-searchlight` を付けて流す
+- Searchlight の収集停止は `searchlight-stop`（毎日）が事例単位で1度だけ行い、`searchlight_stopped_at` に記録する。upsert はこの値を原則上書きしないが、`searchlightTopicId` を変えたとき、`monitorEndDate` を後ろに延ばしたとき、`status` を `ended` から戻したときは消す（新しい topic・再開した収集を、次の終了時にまた止めるため）
+- **再開しても Searchlight の収集は自動では戻らない**。`ended` から戻す・終了日を延ばすなどで事例を再開するときは、`searchlight-stop` が無効にした topic の収集を Searchlight のコンソールで手で有効に戻す。戻さないと `searchlight-sync` は成功し続けるが取り込みは 0 件のまま
+- topic が一覧に無い・`collectionConfig` があるのに形が読めない・topic があるのに `SEARCHLIGHT_*` が未設定のときは、`searchlight-stop` / `searchlight-sync` は失敗（500・`job_runs.ok=false`）になり、停止済みとは記録しない。毎日失敗し続けるので、原因を直すまで残る。`collectionConfig` 自体が無い topic は自動収集を設定していないものとして、止める対象なしで停止済みと記録する
+- **停止の記録が無いまま `searchlightTopicId` を外す・差し替えることはスクリプトが拒否する**（外すと `searchlight-stop` の対象から消え、旧 topic の収集＝課金を誰も止めなくなる）。終了日の翌日以降に `searchlight-stop` が停止を記録するのを待ってから流し直すか、Searchlight のコンソールで旧 topic の収集を止めたうえで `--topic-stopped-in-searchlight` を付けて流す。旧 topic ID が誤記で Searchlight のトピック一覧に無い場合も、`searchlight-stop` は停止を記録できず待っても解消しないので、`--topic-stopped-in-searchlight` を付けて差し替える
+- 既存の行が今の検証を通らず読めない（旧仕様で入った行など）ときも、旧 topic を判定できないのでスクリプトは拒否する。Searchlight のコンソールで旧 topic の収集が止まっていることを確かめたうえで `--topic-stopped-in-searchlight` を付けて流すと、行を上書きして直す
 - 終了後に Neon を止める場合も、公開ページは Blob だけで動く
 
 ## 5. 障害時の見方

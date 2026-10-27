@@ -5,7 +5,7 @@
  *       [--topic-stopped-in-searchlight]
  *
  * JSON を検証 → マイグレーション → tenants テーブルへ upsert → Blob の公開設定と事例一覧を更新する。
- * 同じ slug を再実行すれば設定の更新になる（searchlight_stopped_at は topic の差し替えと終了日の延長でだけ消える）。
+ * 同じ slug を再実行すれば設定の更新になる（searchlight_stopped_at は topic の差し替え・終了日の延長・ended からの再開でだけ消える）。
  * DATABASE_URL と BLOB_READ_WRITE_TOKEN が指す先に実際に書くので、対象環境を確認してから流すこと。
  */
 import { readFileSync } from "node:fs";
@@ -116,6 +116,22 @@ export function topicRemovalRefusal(
     "旧 topic の収集停止が記録されていません（searchlight_stopped_at が空）。このまま変えると旧 topic の収集＝課金が止まりません。",
     "終了日の翌日以降に searchlight-stop が停止を記録するのを待ってから流し直すか、",
     `Searchlight のコンソールで旧 topic の収集を止めたうえで ${TOPIC_STOPPED_FLAG} を付けて流し直してください。`,
+    `旧 topic ID が誤記で Searchlight のトピック一覧に無い場合も、${TOPIC_STOPPED_FLAG} を付けて差し替えてください`,
+    "（一覧に無い topic は searchlight-stop が停止を記録できず、待っても解消しません）。",
+  ].join("\n");
+}
+
+/**
+ * 純関数。既存の行が今の検証を通らず読めなかったときの拒否理由を返す（旧仕様で入った行など）。
+ * 旧 topic が分からないので topicRemovalRefusal で守れない。Searchlight で止めたと明示されたときだけ、
+ * upsert で行ごと上書きして直せるよう通す。
+ */
+export function unreadableExistingRefusal(err: unknown, stoppedInSearchlight: boolean): string | null {
+  if (stoppedInSearchlight) return null;
+  return [
+    `既存の事例の行が読めないため、設定中の旧 topic を判定できません: ${err instanceof Error ? err.message : String(err)}`,
+    "旧 topic の収集＝課金を止め損ねないよう、このままでは上書きしません。",
+    `Searchlight のコンソールで旧 topic の収集が止まっていることを確かめたうえで ${TOPIC_STOPPED_FLAG} を付けて流し直すと、行を上書きして直します。`,
   ].join("\n");
 }
 
@@ -136,7 +152,14 @@ async function main(): Promise<void> {
   const { publishTenant } = await import("../src/lib/tenant/publish");
 
   await migrate();
-  const refusal = topicRemovalRefusal(await getTenant(input.slug), input, args.includes(TOPIC_STOPPED_FLAG));
+  const stoppedInSearchlight = args.includes(TOPIC_STOPPED_FLAG);
+  let refusal: string | null;
+  try {
+    const existing = await getTenant(input.slug);
+    refusal = topicRemovalRefusal(existing, input, stoppedInSearchlight);
+  } catch (e) {
+    refusal = unreadableExistingRefusal(e, stoppedInSearchlight);
+  }
   if (refusal !== null) {
     console.error(refusal);
     process.exit(1);

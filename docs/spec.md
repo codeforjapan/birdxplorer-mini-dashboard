@@ -453,7 +453,7 @@ SEARCHLIGHT_*                 # 任意
 7. フロントエンド実装（`docs/design.md` に準拠）
 8. ~~ポリシーページ（匿名化方針・AI生成の明示・データ出典）~~ — **v1.1 で取りやめ。ページは作らない**（§8-3・§8-8 参照）。AI生成の明示のみ、レポートセクション内の常時表示として残す（§7）
 9. 8/31 の自動停止処理（v2: 事例設定の `monitorEndDate` の翌日 00:00 JST 以降は dispatch が対象にしない。Searchlight の収集停止は `searchlight-stop` が事例単位で行う）
-10. （v2）事例の作成・更新: `pnpm exec tsx --env-file=.env.local scripts/tenant-upsert.ts <file.json>`。検証 → `migrate()` → `upsertTenant` → `publishTenant`。`searchlight_stopped_at` は topic の差し替えと終了日の延長でだけ消え、停止の記録が無いまま topic を外す・差し替える変更は拒否する（runbook §4）。JSON の雛形は `tenants/examples/`。手順は `docs/tenant-runbook.md`
+10. （v2）事例の作成・更新: `pnpm exec tsx --env-file=.env.local scripts/tenant-upsert.ts <file.json>`。検証 → `migrate()` → `upsertTenant` → `publishTenant`。`searchlight_stopped_at` は topic の差し替え・終了日の延長・`ended` からの再開でだけ消え、停止の記録が無いまま topic を外す・差し替える変更は拒否する（runbook §4）。JSON の雛形は `tenants/examples/`。手順は `docs/tenant-runbook.md`
 
 ---
 

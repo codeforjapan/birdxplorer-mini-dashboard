@@ -104,6 +104,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("tenant repo（実 DB）", () =>
     expect((await repo.getTenant("repo-test"))?.searchlightStoppedAt).toBeNull();
   });
 
+  it("ended から戻すと消し、ended のままなら残す", async () => {
+    await repo.upsertTenant({ ...rec, status: "ended" });
+    await repo.markSearchlightStopped("repo-test", 12345);
+    await repo.upsertTenant({ ...rec, status: "ended" });
+    expect((await repo.getTenant("repo-test"))?.searchlightStoppedAt).toBe(12345);
+    await repo.upsertTenant({ ...rec, status: "active" });
+    expect((await repo.getTenant("repo-test"))?.searchlightStoppedAt).toBeNull();
+  });
+
   it("行の slug と settings.slug が食い違う行は読み出しで例外", async () => {
     await repo.upsertTenant({ ...rec, settings: { ...settings, slug: "other" } });
     await expect(repo.getTenant("repo-test")).rejects.toThrow(/一致しません/);
