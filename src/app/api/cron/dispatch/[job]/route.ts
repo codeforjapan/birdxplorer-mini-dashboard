@@ -41,9 +41,9 @@ export async function GET(req: Request, ctx: { params: Promise<{ job: string }> 
   try {
     const slugs = selectTenantsForJob(job, await readTenantIndex());
     const results = await dispatchJob(job, cronSelfOrigin(), slugs, cronSecret());
-    const failed = results.filter((r) => r.status !== 200);
-    if (failed.length > 0) console.error(`[dispatch:${job}] 失敗した事例`, failed);
-    return Response.json({ job, results });
+    // 1件でも失敗したら 200 にしない（Vercel の cron 履歴で失敗に気づけるように）。個別のログは dispatchJob が出す
+    const anyFailed = results.some((r) => r.status !== 200);
+    return Response.json({ job, results }, { status: anyFailed ? 502 : 200 });
   } catch (e) {
     console.error(`[dispatch:${job}] 失敗`, e);
     return Response.json(

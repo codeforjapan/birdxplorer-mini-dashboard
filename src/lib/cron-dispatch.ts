@@ -47,6 +47,11 @@ export type DispatchResult = { slug: string; status: number | "error" };
 /**
  * 各事例の作業ルートを別の関数実行として並列に呼ぶ。1件が失敗・タイムアウトしても
  * 他の事例は止めず、全件の結果を返す（例外は投げない）。
+ * 失敗はそれぞれの応答が返った時点でログに出す（振り分け役が maxDuration で打ち切られると
+ * Promise.all の後には到達せず、先に終わった事例の失敗まで消えるため）。
+ *
+ * 子の fetch に timeout / AbortSignal は付けない。Vercel Fluid Compute では呼び出し元の切断で
+ * 子の関数実行が取り消され得るので、待ちきれずに中断すると子の実際の処理まで止めかねない。
  */
 export async function dispatchJob(
   job: JobName,
@@ -64,6 +69,7 @@ export async function dispatchJob(
           headers: { authorization: `Bearer ${secret}` },
           cache: "no-store",
         });
+        if (res.status !== 200) console.error(`[dispatch:${job}] ${slug} が HTTP ${res.status} を返した`);
         return { slug, status: res.status };
       } catch (e) {
         console.error(`[dispatch:${job}] ${slug} の呼び出しに失敗`, e);

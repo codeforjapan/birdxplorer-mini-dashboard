@@ -107,7 +107,10 @@ describe("dispatchJob", () => {
       throw new Error("timeout");
     });
 
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const results = await dispatchJob("ingest", "https://example.org", ["a", "b", "c"], "s3cret", fetchImpl);
+    expect(error).toHaveBeenCalledTimes(2);
+    error.mockRestore();
 
     expect(results).toEqual([
       { slug: "a", status: 200 },
@@ -120,6 +123,27 @@ describe("dispatchJob", () => {
       "https://example.org/api/cron/ingest?tenant=c",
     ]);
     expect(calls.every((c) => c.auth === "Bearer s3cret")).toBe(true);
+  });
+
+  it("失敗は他の事例の完了を待たずに、その場でログに出す", async () => {
+    let releaseA!: () => void;
+    const aDone = new Promise<void>((r) => (releaseA = r));
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      if (String(input).endsWith("tenant=a")) {
+        await aDone;
+        return new Response("{}", { status: 200 });
+      }
+      return new Response("{}", { status: 500 });
+    });
+
+    const pending = dispatchJob("report", "https://example.org", ["a", "b"], "s", fetchImpl);
+    await vi.waitFor(() => expect(error).toHaveBeenCalledOnce());
+    expect(String(error.mock.calls[0]?.[0])).toContain("b が HTTP 500");
+    releaseA();
+    await pending;
+    expect(error).toHaveBeenCalledOnce();
+    error.mockRestore();
   });
 
   it("対象が無ければ呼ばない", async () => {
