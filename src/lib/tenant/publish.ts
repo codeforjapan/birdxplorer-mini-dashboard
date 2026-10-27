@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { readText, TENANT_INDEX_PATH, tenantPaths, writeJson } from "../blob";
+import { readTextStrict, TENANT_INDEX_PATH, tenantPaths, writeJson } from "../blob";
 import { listTenants } from "./repo";
 import { resolveTenantConfig, toPublicConfig } from "./resolve";
 import type { PublicTenantConfig, TenantRecord, TenantStatus } from "./types";
@@ -80,15 +80,20 @@ export async function publishTenant(rec: TenantRecord): Promise<void> {
 
 /**
  * dispatch 用。毎回最新が要るので ISR キャッシュを通さない。
- * 壊れているときは例外にする（空として扱うと全事例の cron が黙って止まる）。
+ * 無い・読めない・壊れているときは例外にする（空として扱うと全事例の cron が黙って止まる）。
+ * publishTenant が必ず書くので、無いのは「まだ1件も tenant-upsert していない」か事故のどちらか。
  */
 export async function readTenantIndex(): Promise<TenantIndexEntry[]> {
-  const text = await readText(TENANT_INDEX_PATH, { revalidate: false });
-  if (text === null) return [];
+  const text = await readTextStrict(TENANT_INDEX_PATH, { revalidate: false });
+  if (text === null) throw new Error(`${TENANT_INDEX_PATH} がありません（tenant-upsert を一度も流していない環境か）`);
   return indexSchema.parse(JSON.parse(text));
 }
 
-/** 公開ページ用。slug はホスト名由来の外部入力なので、形式違反も「無い」として null にする。 */
+/**
+ * 公開ページ用。slug はホスト名由来の外部入力なので、形式違反と「無い」は null（404）にする。
+ * 読み取り失敗・中身の破損は例外にする。null だと 404 が ISR にキャッシュされ、一時的な障害で
+ * 生成済みのページが消える。例外ならエラー扱いになり、前回生成したページが配信され続ける。
+ */
 export async function readPublicConfig(slug: string): Promise<PublicTenantConfig | null> {
   let path: string;
   try {
@@ -96,12 +101,20 @@ export async function readPublicConfig(slug: string): Promise<PublicTenantConfig
   } catch {
     return null;
   }
-  const text = await readText(path, { revalidate: 600 });
+  const text = await readTextStrict(path, { revalidate: 600 });
   if (text === null) return null;
+
+  let raw: unknown;
   try {
-    const parsed = publicConfigSchema.safeParse(JSON.parse(text));
-    return parsed.success ? parsed.data : null;
-  } catch {
-    return null;
+    raw = JSON.parse(text);
+  } catch (e) {
+    console.error(`[tenant-config] ${path} が JSON として読めない`, e);
+    throw e;
   }
+  const parsed = publicConfigSchema.safeParse(raw);
+  if (!parsed.success) {
+    console.error(`[tenant-config] ${path} が公開設定の形に合わない`, parsed.error.issues);
+    throw new Error(`${path} が公開設定の形に合いません`);
+  }
+  return parsed.data;
 }

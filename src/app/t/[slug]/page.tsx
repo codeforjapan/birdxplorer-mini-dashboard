@@ -40,7 +40,7 @@ type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
   const { slug } = await params;
   const config = await readPublicConfig(slug).catch(() => null);
-  if (!config) return {};
+  if (!config || config.status === "draft") return {};
   return { title: config.siteTitle, description: config.siteDescription };
 }
 
@@ -56,7 +56,8 @@ export default async function Page({ params, searchParams }: { params: Params; s
   const config = useMock
     ? ((await readPublicConfig(slug).catch(() => null)) ?? mockPublicConfig(slug))
     : await readPublicConfig(slug);
-  if (!config) notFound();
+  // draft は作業中の事例なので公開しない（手元のモック表示では確認できるようにする）
+  if (!config || (config.status === "draft" && !useMock)) notFound();
 
   let notesFile: NotesFile | null = null;
   let clustersFile: ClustersFile | null = null;

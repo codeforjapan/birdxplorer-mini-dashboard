@@ -61,16 +61,20 @@ type ReadOptions = {
   revalidate?: number | false;
 };
 
-async function read(pathname: string, opts: ReadOptions = {}): Promise<string | null> {
-  const url = await resolveUrl(pathname);
-  if (!url) return null;
-
-  const res = await fetch(
+function fetchBlob(url: string, opts: ReadOptions): Promise<Response> {
+  return fetch(
     url,
     opts.revalidate === false
       ? { cache: "no-store" }
       : { next: { revalidate: opts.revalidate ?? 600 } },
   );
+}
+
+async function read(pathname: string, opts: ReadOptions = {}): Promise<string | null> {
+  const url = await resolveUrl(pathname);
+  if (!url) return null;
+
+  const res = await fetchBlob(url, opts);
   if (!res.ok) return null;
   return res.text();
 }
@@ -88,6 +92,21 @@ export async function readJson<T>(pathname: string, opts?: ReadOptions): Promise
 
 export async function readText(pathname: string, opts?: ReadOptions): Promise<string | null> {
   return read(pathname, opts);
+}
+
+/**
+ * 「無い」と「読めない」を区別する読み取り。無いときだけ null を返し、HTTP エラーや通信失敗は例外にする。
+ * 読めなかったのを「無い」と扱うと困る呼び出し元（dispatch の事例一覧・公開設定）のためのもの。
+ */
+export async function readTextStrict(pathname: string, opts: ReadOptions = {}): Promise<string | null> {
+  const url = await resolveUrl(pathname);
+  if (!url) return null;
+
+  const res = await fetchBlob(url, opts);
+  // 一覧に出た直後の削除などで実体が消えている場合も「無い」
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Blob の読み取りに失敗: ${pathname} (HTTP ${res.status})`);
+  return res.text();
 }
 
 export async function writeJson(

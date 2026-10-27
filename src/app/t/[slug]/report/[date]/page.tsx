@@ -24,7 +24,7 @@ type Params = Promise<{ slug: string; date: string }>;
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
   const { slug } = await params;
   const config = await readPublicConfig(slug).catch(() => null);
-  if (!config) return {};
+  if (!config || config.status === "draft") return {};
   return { title: config.siteTitle, description: config.siteDescription };
 }
 
@@ -37,9 +37,10 @@ export default async function DailyReportPage({ params }: { params: Params }) {
     notFound();
   }
 
-  // 本文の取得失敗と同じく、設定が読めないときも404に倒す（既存の日次ページの挙動に揃える）
-  const config = await readPublicConfig(slug).catch(() => null);
-  if (!config) notFound();
+  // 設定の読み取り失敗は 404 にせず例外のまま返す（404 が ISR にキャッシュされて生成済みのページが消えるため）。
+  // draft は作業中の事例なので公開しない
+  const config = await readPublicConfig(slug);
+  if (!config || config.status === "draft") notFound();
   const paths = tenantPaths(slug);
 
   const markdown = await readText(paths.dailyReport(date)).catch(() => null);
