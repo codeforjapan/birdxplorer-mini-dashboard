@@ -6,7 +6,7 @@ import { fieldErrors, toTenantInput, type TenantFormValues } from "@/lib/admin/f
 import { migrate } from "@/lib/db";
 import { safeParseTenantInput, type TenantInput } from "@/lib/tenant/input";
 import { publishTenant } from "@/lib/tenant/publish";
-import { getTenant, saveTenant } from "@/lib/tenant/repo";
+import { getTenant, listTenantsLenient, saveTenant } from "@/lib/tenant/repo";
 import { isValidSlug } from "@/lib/tenant/slug";
 import type { TenantRecord, TenantStatus } from "@/lib/tenant/types";
 
@@ -78,28 +78,43 @@ function revalidate(slug: string): void {
   revalidatePath(`/admin/${slug}`);
 }
 
+// publishTenant は index.json を全事例から作り直すので、読めない行が1つでもあると何度保存しても失敗し続ける
+async function publishFailure(): Promise<Failure> {
+  let unreadable: string[] = [];
+  try {
+    unreadable = (await listTenantsLenient()).filter((i) => i.record === null).map((i) => i.slug);
+  } catch (e) {
+    console.error("[admin] 読めない事例の確認に失敗しました", e);
+  }
+  if (unreadable.length > 0) {
+    return fail(
+      "publish-failed",
+      `DB には保存しましたが、読めない事例（${unreadable.join("、")}）があるため公開側に反映できません。` +
+        "1件でも読めない事例があると、他の事例の保存も公開側に反映されません。" +
+        "scripts/tenant-upsert.ts でその事例を直してください（docs/tenant-runbook.md）",
+    );
+  }
+  return fail(
+    "publish-failed",
+    "DB には保存しましたが、公開設定（Blob）の更新に失敗しました。編集画面でもう一度「保存」を押すと公開側に書き直します",
+  );
+}
+
 async function saveAndPublish(input: TenantInput, expectedUpdatedAt: number | null): Promise<ActionResult> {
-  const result = await saveTenant(input, expectedUpdatedAt);
-  if (result === "exists") return fail("exists", `slug ${input.slug} の事例はすでにあります`);
-  if (result === "conflict") {
+  const saved = await saveTenant(input, expectedUpdatedAt);
+  if (saved.result === "exists") return fail("exists", `slug ${input.slug} の事例はすでにあります`);
+  if (saved.result === "conflict") {
     return fail("conflict", "開いている間に他の人が保存しました。開き直して最新の内容を確かめてから保存してください");
   }
   // DB は反映済みなので、公開の成否によらず一覧と編集画面を最新にする
   revalidate(input.slug);
-  let savedUpdatedAt: number | undefined;
+  const { record } = saved;
   try {
-    const saved = await getTenant(input.slug);
-    if (saved === null) throw new Error("保存後に事例が読めません");
-    savedUpdatedAt = saved.updatedAt;
-    await publishTenant(saved);
-    return { ok: true, slug: saved.slug, updatedAt: saved.updatedAt };
+    await publishTenant(record);
+    return { ok: true, slug: record.slug, updatedAt: record.updatedAt };
   } catch (e) {
     console.error(`[admin] 公開に失敗しました: ${input.slug}`, e);
-    const f = fail(
-      "publish-failed",
-      "DB には保存しましたが、公開設定（Blob）の更新に失敗しました。もう一度保存すると Blob に書き直します",
-    );
-    return savedUpdatedAt === undefined ? f : { ...f, updatedAt: savedUpdatedAt };
+    return { ...(await publishFailure()), updatedAt: record.updatedAt };
   }
 }
 
@@ -162,9 +177,17 @@ export async function changeTenantStatusAction(
     const existing = await readExisting(slug);
     if (!existing.ok) return existing.failure;
     const { rec } = existing;
-    return saveAndPublish(
-      { slug: rec.slug, type: rec.type, status: to, settings: rec.settings, overrides: rec.overrides },
-      expectedUpdatedAt,
-    );
+    // 読み出しの検証は入力より緩いので、そのまま書くと画面からは入れられない値を公開しかねない
+    const parsed = safeParseTenantInput({
+      slug: rec.slug,
+      type: rec.type,
+      status: to,
+      settings: rec.settings,
+      overrides: rec.overrides,
+    });
+    if (!parsed.ok) {
+      return fail("invalid", "保存されている設定に誤りがあります。編集画面で直して保存してから状態を切り替えてください");
+    }
+    return saveAndPublish(parsed.value, expectedUpdatedAt);
   });
 }

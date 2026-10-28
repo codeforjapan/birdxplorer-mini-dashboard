@@ -132,45 +132,70 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("tenant repo（実 DB）", () =>
   });
 
   it("saveTenant: 新規は saved、同じ slug は exists で何も書かない", async () => {
-    expect(await repo.saveTenant(rec, null)).toBe("saved");
-    expect(await repo.saveTenant({ ...rec, status: "ended" }, null)).toBe("exists");
+    const saved = await repo.saveTenant(rec, null);
+    expect(saved.result).toBe("saved");
+    expect(await repo.saveTenant({ ...rec, status: "ended" }, null)).toEqual({ result: "exists" });
     const got = await repo.getTenant("repo-test");
     expect(got?.status).toBe("active");
+    expect(saved.result === "saved" && saved.record).toEqual(got);
     expect((await repo.listTenants()).filter((t) => t.slug === "repo-test")).toHaveLength(1);
   });
 
   it("saveTenant: updatedAt が一致したときだけ更新し、古い値は conflict", async () => {
     await repo.saveTenant(rec, null);
     const first = (await repo.getTenant("repo-test"))!.updatedAt;
-    expect(await repo.saveTenant({ ...rec, overrides: { binMinutes: 10 } }, first)).toBe("saved");
+    const saved = await repo.saveTenant({ ...rec, overrides: { binMinutes: 10 } }, first);
     const second = (await repo.getTenant("repo-test"))!;
+    expect(saved).toEqual({ result: "saved", record: second });
     expect(second.updatedAt).toBeGreaterThan(first);
-    expect(await repo.saveTenant({ ...rec, overrides: { binMinutes: 99 } }, first)).toBe("conflict");
+    expect(await repo.saveTenant({ ...rec, overrides: { binMinutes: 99 } }, first)).toEqual({ result: "conflict" });
     expect((await repo.getTenant("repo-test"))?.overrides).toEqual({ binMinutes: 10 });
   });
 
-  it("saveTenant: 同一ミリ秒の連続保存でも updatedAt は増える", async () => {
+  it("saveTenant: 同一ミリ秒の連続保存でも updatedAt は増え、返す値は DB の値", async () => {
     await repo.saveTenant(rec, null);
     let at = (await repo.getTenant("repo-test"))!.updatedAt;
     for (let i = 0; i < 5; i++) {
-      expect(await repo.saveTenant(rec, at)).toBe("saved");
+      const saved = await repo.saveTenant(rec, at);
       const next = (await repo.getTenant("repo-test"))!.updatedAt;
+      expect(saved.result === "saved" && saved.record.updatedAt).toBe(next);
       expect(next).toBeGreaterThan(at);
       at = next;
     }
   });
 
   it("saveTenant: 存在しない slug への更新は conflict", async () => {
-    expect(await repo.saveTenant(rec, 123)).toBe("conflict");
+    expect(await repo.saveTenant(rec, 123)).toEqual({ result: "conflict" });
     expect(await repo.getTenant("repo-test")).toBeNull();
   });
 
-  it("saveTenant: ended から戻すと searchlight_stopped_at を消す", async () => {
+  it("saveTenant: ended から戻すと searchlight_stopped_at を消し、返す record にも反映する", async () => {
     await repo.upsertTenant({ ...rec, status: "ended" });
     await repo.markSearchlightStopped("repo-test", 12345);
     const at = (await repo.getTenant("repo-test"))!.updatedAt;
-    expect(await repo.saveTenant({ ...rec, status: "active" }, at)).toBe("saved");
+    const saved = await repo.saveTenant({ ...rec, status: "active" }, at);
+    expect(saved.result === "saved" && saved.record.searchlightStoppedAt).toBeNull();
     expect((await repo.getTenant("repo-test"))?.searchlightStoppedAt).toBeNull();
+  });
+
+  it("saveTenant: 停止記録を保つ保存では返す record にも残る", async () => {
+    await repo.upsertTenant(rec);
+    await repo.markSearchlightStopped("repo-test", 12345);
+    const at = (await repo.getTenant("repo-test"))!.updatedAt;
+    const saved = await repo.saveTenant({ ...rec, overrides: { binMinutes: 10 } }, at);
+    expect(saved.result === "saved" && saved.record.searchlightStoppedAt).toBe(12345);
+  });
+
+  // 時計の戻りや同一ミリ秒でも、画面が開いた時点の値と再び一致して後勝ちになるのを防ぐ
+  it("upsertTenant・markSearchlightStopped も updatedAt を必ず増やす", async () => {
+    await repo.upsertTenant(rec);
+    const future = Date.now() + 10_000_000;
+    await db.sql()`update tenants set updated_at = ${future} where slug = 'repo-test'`;
+    await repo.upsertTenant({ ...rec, overrides: { binMinutes: 10 } });
+    const afterUpsert = (await repo.getTenant("repo-test"))!.updatedAt;
+    expect(afterUpsert).toBeGreaterThan(future);
+    await repo.markSearchlightStopped("repo-test", 12345);
+    expect((await repo.getTenant("repo-test"))!.updatedAt).toBeGreaterThan(afterUpsert);
   });
 
   it("listTenantsLenient: 壊れた行は error 付きで返し、他の行は読める", async () => {

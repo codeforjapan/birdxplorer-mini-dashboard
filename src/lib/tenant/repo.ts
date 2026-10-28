@@ -122,13 +122,31 @@ export async function upsertTenant(rec: TenantInput): Promise<void> {
       status = excluded.status,
       settings = excluded.settings,
       overrides = excluded.overrides,
-      updated_at = excluded.updated_at,
+      updated_at = greatest(excluded.updated_at, tenants.updated_at + 1),
       searchlight_stopped_at = ${searchlightStoppedAtExpr("excluded.settings", "excluded.status")}`,
     [rec.slug, rec.type, rec.status, JSON.stringify(rec.settings), JSON.stringify(rec.overrides), Date.now()],
   );
 }
 
-export type SaveResult = "saved" | "conflict" | "exists";
+export type SaveResult = { result: "saved"; record: TenantRecord } | { result: "conflict" } | { result: "exists" };
+
+const savedColumnsSchema = z.object({
+  updated_at: z.union([z.string(), z.number()]),
+  searchlight_stopped_at: z.union([z.string(), z.number()]).nullable(),
+});
+
+// 保存後に読み直すと、その間の他の書き込みの updated_at を拾って競合検知をすり抜けるので、書いた行の値を返す
+function savedRecord(input: TenantInput, rows: unknown[]): SaveResult {
+  const cols = savedColumnsSchema.parse(rows[0]);
+  return {
+    result: "saved",
+    record: {
+      ...input,
+      searchlightStoppedAt: nullableBigintToNumber(cols.searchlight_stopped_at),
+      updatedAt: bigintToNumber(cols.updated_at),
+    },
+  };
+}
 
 /**
  * 画面からの保存。後勝ちで上書きしないよう、新規（null）は既存 slug を弾き、
@@ -143,10 +161,10 @@ export async function saveTenant(input: TenantInput, expectedUpdatedAt: number |
       `insert into tenants (slug, type, status, settings, overrides, updated_at)
       values ($1, $2, $3, $4::jsonb, $5::jsonb, $6)
       on conflict (slug) do nothing
-      returning slug`,
+      returning updated_at, searchlight_stopped_at`,
       [input.slug, input.type, input.status, settings, overrides, Date.now()],
     );
-    return rows.length === 0 ? "exists" : "saved";
+    return rows.length === 0 ? { result: "exists" } : savedRecord(input, rows);
   }
   const rows = await sql().query(
     `update tenants set
@@ -157,10 +175,10 @@ export async function saveTenant(input: TenantInput, expectedUpdatedAt: number |
       updated_at = greatest($6::bigint, updated_at + 1),
       searchlight_stopped_at = ${searchlightStoppedAtExpr("$4::jsonb", "$3")}
     where slug = $1 and updated_at = $7
-    returning slug`,
+    returning updated_at, searchlight_stopped_at`,
     [input.slug, input.type, input.status, settings, overrides, Date.now(), expectedUpdatedAt],
   );
-  return rows.length === 0 ? "conflict" : "saved";
+  return rows.length === 0 ? { result: "conflict" } : savedRecord(input, rows);
 }
 
 export type TenantListItem =
@@ -182,6 +200,6 @@ export async function listTenantsLenient(): Promise<TenantListItem[]> {
 
 export async function markSearchlightStopped(slug: string, at: number): Promise<void> {
   await sql()`
-    update tenants set searchlight_stopped_at = ${at}, updated_at = ${Date.now()}
+    update tenants set searchlight_stopped_at = ${at}, updated_at = greatest(${Date.now()}::bigint, updated_at + 1)
     where slug = ${slug}`;
 }
