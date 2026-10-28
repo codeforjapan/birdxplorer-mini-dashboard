@@ -22,6 +22,7 @@ export function EditTenantForm({ initial, initialStatus, initialUpdatedAt, searc
   const [updatedAt, setUpdatedAt] = useState(initialUpdatedAt);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState<Notice | null>(null);
+  // 保存と状態切り替えが並ぶと後の方が自分の更新と競合するので、1つの pending で両方を止める
   const [pending, startTransition] = useTransition();
 
   const save = () => {
@@ -41,8 +42,6 @@ export function EditTenantForm({ initial, initialStatus, initialUpdatedAt, searc
         setNotice({ tone: "error", text: r.message });
       } else if (r.kind === "conflict") {
         setNotice({ tone: "error", text: "ほかの人が更新しました。再読み込みしてください" });
-      } else if (r.kind === "publish-failed") {
-        setNotice({ tone: "error", text: "DB には保存済み。もう一度保存すると公開側に書き直します" });
       } else {
         setNotice({ tone: "error", text: r.message });
       }
@@ -65,6 +64,8 @@ export function EditTenantForm({ initial, initialStatus, initialUpdatedAt, searc
           slug={values.slug}
           status={status}
           updatedAt={updatedAt}
+          pending={pending}
+          startTransition={startTransition}
           onChanged={(to, at) => {
             setStatus(to);
             setUpdatedAt(at);

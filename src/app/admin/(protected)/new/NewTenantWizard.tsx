@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { TenantFormSections } from "@/app/admin/_components/TenantFormSections";
 import { createTenantAction } from "@/lib/admin/actions";
 import { newFormValues, type TenantFormValues } from "@/lib/admin/form";
@@ -48,26 +48,30 @@ export function NewTenantWizard() {
   const [step, setStep] = useState(0);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState<string | null>(null);
-  const [createdSlug, setCreatedSlug] = useState<string | null>(null);
+  const [publishFailed, setPublishFailed] = useState<{ slug: string; message: string } | null>(null);
   const [pending, startTransition] = useTransition();
-  // 復元前の初期値で保存済みの下書きを上書きしないための印
-  const restored = useRef(false);
+  // ref だと StrictMode の再実行で、復元した値が描画される前に初期値で下書きを上書きする。
+  // state なら復元した値と同じ描画で true になる
+  const [restored, setRestored] = useState(false);
+  // 作成後に下書きを書き戻すと、次に開いたとき作成済みの内容が復元される
+  const [done, setDone] = useState(false);
 
   // SSR との不一致を避けるため、マウント後に読む
   useEffect(() => {
     const d = parseDraft(storageGet());
+    /* eslint-disable react-hooks/set-state-in-effect -- localStorage はマウント後にしか読めない */
     if (d !== null) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage はマウント後にしか読めない
       setValues(d.values);
       setStep(d.step);
     }
-    restored.current = true;
+    setRestored(true);
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, []);
 
   useEffect(() => {
-    if (!restored.current || createdSlug !== null) return;
+    if (!restored || done) return;
     storageSet(JSON.stringify({ values, step }));
-  }, [values, step, createdSlug]);
+  }, [values, step, restored, done]);
 
   const current = WIZARD_STEPS[step];
   const isConfirm = current.id === "confirm";
@@ -102,14 +106,16 @@ export function NewTenantWizard() {
     startTransition(async () => {
       const r = await createTenantAction(values);
       if (r.ok) {
+        setDone(true);
         storageClear();
         router.push(`/admin/${r.slug}`);
         return;
       }
       if (r.kind === "publish-failed") {
-        // DB には下書きとして入っているので、下書きの再保存は「保存」で公開側に書き直す
+        // DB には下書きとして入っているので、ここから先は編集ページで扱う
+        setDone(true);
         storageClear();
-        setCreatedSlug(values.slug);
+        setPublishFailed({ slug: values.slug, message: r.message });
         return;
       }
       if (r.kind === "exists") {
@@ -129,15 +135,13 @@ export function NewTenantWizard() {
     });
   };
 
-  if (createdSlug !== null) {
+  if (publishFailed !== null) {
     return (
       <div className="flex flex-col gap-3">
         <h1 className="text-[20px] font-bold text-heading">下書きは作りましたが、公開側への書き込みに失敗しました</h1>
-        <p className="text-[13px] text-body">
-          DB には保存済みです。事例の編集ページで「保存」を押すと、公開側に書き直します。
-        </p>
-        <Link href={`/admin/${createdSlug}`} className="text-[13px] text-heading underline">
-          {createdSlug} の編集ページへ
+        <p className="text-[13px] text-body">{publishFailed.message}</p>
+        <Link href={`/admin/${publishFailed.slug}`} className="text-[13px] text-heading underline">
+          {publishFailed.slug} の編集ページへ
         </Link>
       </div>
     );

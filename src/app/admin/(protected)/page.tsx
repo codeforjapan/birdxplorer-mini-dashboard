@@ -34,6 +34,7 @@ export default async function AdminListPage() {
   await ensureMigrated();
   const items = await listTenantsLenient();
   const rules = parseHostRules(tenantHostEnv());
+  const unreadable = items.filter((i) => i.record === null).map((i) => i.slug);
 
   return (
     <main>
@@ -46,6 +47,17 @@ export default async function AdminListPage() {
           ＋ 新しい事例
         </Link>
       </div>
+      {unreadable.length > 0 && (
+        <div role="alert" className="mb-4 rounded-lg border border-line bg-card p-4 text-[13px] text-strong">
+          <p className="font-bold">
+            1件でも読めない事例があると、他の事例の保存も公開側に反映されません
+          </p>
+          <p className="mt-1 text-body">
+            読めない事例: <span className="tabular">{unreadable.join("、")}</span>。<code>tenant-upsert</code>{" "}
+            で直してください。
+          </p>
+        </div>
+      )}
       {items.length === 0 ? (
         <p className="text-[14px] text-muted">事例はまだありません。</p>
       ) : (
@@ -55,7 +67,9 @@ export default async function AdminListPage() {
               {item.record === null ? (
                 <div className="text-[13px] text-body">
                   <p className="tabular font-bold text-heading">{item.slug}</p>
-                  <p className="mt-1">設定が読めません。`tenant-upsert` で直してください。</p>
+                  <p className="mt-1">
+                    設定が読めません。<code>tenant-upsert</code> で直してください。
+                  </p>
                   <p className="mt-1 text-muted">{item.error}</p>
                 </div>
               ) : (

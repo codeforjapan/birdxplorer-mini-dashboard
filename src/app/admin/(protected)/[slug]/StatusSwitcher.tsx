@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, type TransitionStartFunction } from "react";
 import { changeTenantStatusAction } from "@/lib/admin/actions";
 import type { TenantStatus } from "@/lib/tenant/types";
 
@@ -15,11 +15,12 @@ type Props = {
   slug: string;
   status: TenantStatus;
   updatedAt: number;
+  pending: boolean;
+  startTransition: TransitionStartFunction;
   onChanged: (to: TenantStatus, updatedAt: number) => void;
 };
 
-export function StatusSwitcher({ slug, status, updatedAt, onChanged }: Props) {
-  const [pending, startTransition] = useTransition();
+export function StatusSwitcher({ slug, status, updatedAt, pending, startTransition, onChanged }: Props) {
   const [message, setMessage] = useState<string | null>(null);
 
   const change = (to: TenantStatus) => {
@@ -34,9 +35,7 @@ export function StatusSwitcher({ slug, status, updatedAt, onChanged }: Props) {
       if (r.updatedAt !== undefined) {
         // DB は進んでいる。状態も反映して、再試行が conflict にならないようにする
         onChanged(to, r.updatedAt);
-        setMessage(
-          r.kind === "publish-failed" ? "DB には保存済み。下の「保存」を押すと公開側に書き直します" : r.message,
-        );
+        setMessage(r.message);
         return;
       }
       setMessage(r.kind === "conflict" ? "ほかの人が更新しました。再読み込みしてください" : r.message);
