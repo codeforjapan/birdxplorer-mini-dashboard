@@ -9,91 +9,10 @@
  * DATABASE_URL と BLOB_READ_WRITE_TOKEN が指す先に実際に書くので、対象環境を確認してから流すこと。
  */
 import { readFileSync } from "node:fs";
-import { z } from "zod";
-import { appTitleSchema, githubRepoSchema, httpUrlSchema } from "../src/lib/tenant/fields";
-import { isValidSlug } from "../src/lib/tenant/slug";
+import { parseTenantInput, type TenantInput } from "../src/lib/tenant/input";
 import type { TenantRecord } from "../src/lib/tenant/types";
 
-export type TenantInput = Omit<TenantRecord, "updatedAt" | "searchlightStoppedAt">;
-
-/** "2026-02-30" のような実在しない日付を、形式だけの正規表現が通さないようにする */
-function isRealDate(s: string): boolean {
-  const d = new Date(`${s}T00:00:00Z`);
-  return !Number.isNaN(d.getTime()) && d.toISOString().startsWith(s);
-}
-
-const nonEmpty = z.string().min(1);
-
-const settingsSchema = z
-  .object({
-    slug: z.string().refine(isValidSlug, "slug が規則に合いません"),
-    siteTitle: nonEmpty,
-    siteDescription: nonEmpty,
-    eyebrowLabel: nonEmpty,
-    scheduleLabel: z.string(),
-    monitorStartAt: z.number().int().positive(),
-    monitorEndDate: z
-      .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/)
-      .refine(isRealDate, "実在しない日付です"),
-    searchKeywords: z.array(nonEmpty).min(1),
-    llmContextPhrase: nonEmpty,
-    llmContextPhraseCompact: nonEmpty,
-    llmContextPhraseShort: nonEmpty,
-    keyMoments: z.array(z.object({ at: z.number(), markerLabel: z.string() }).strict()),
-    keyMomentLabel: z.string(),
-    keyMomentValue: z.string(),
-    githubRepo: githubRepoSchema,
-    appTitle: appTitleSchema,
-    issuesUrl: httpUrlSchema,
-    officialSourcesIntro: z.string(),
-    officialSources: z.array(z.object({ label: nonEmpty, url: httpUrlSchema }).strict()),
-    officialSourcesDisclaimer: z.string(),
-    searchlightTopicId: z.string().min(1).nullable(),
-  })
-  .strict();
-
-const overridesSchema = z
-  .object({
-    relevanceMode: z.enum(["score", "binary"]),
-    relevanceThreshold: z.number(),
-    binMinutes: z.number().int().positive(),
-    taxonomy: z
-      .object({
-        searchTermExamples: z.string(),
-        relevantExamples: z.string(),
-        irrelevantExamples: z.string(),
-        clusterNamingGoodExamples: z.string(),
-        clusterNamingBadExamples: z.string(),
-        clusterNamingGoodExampleSingle: z.string(),
-        clusterNamingBadExampleSingle: z.string(),
-        overMergeCounterExample: z.string(),
-        namingNeutralityRule: z.string().nullable(),
-      })
-      .partial()
-      .strict(),
-  })
-  .partial()
-  .strict();
-
-const inputSchema = z
-  .object({
-    slug: z.string().refine(isValidSlug, "slug が規則に合いません"),
-    type: z.enum(["disaster", "election"]),
-    status: z.enum(["draft", "active", "ended"]),
-    settings: settingsSchema,
-    overrides: overridesSchema,
-  })
-  .strict()
-  .refine((v) => v.slug === v.settings.slug, {
-    message: "slug と settings.slug が一致しません",
-    path: ["settings", "slug"],
-  });
-
-/** 純関数。外部入力（JSON）を検証して型付きの値にする。違反は ZodError。 */
-export function parseTenantInput(raw: unknown): TenantInput {
-  return inputSchema.parse(raw);
-}
+export { parseTenantInput, type TenantInput };
 
 export const TOPIC_STOPPED_FLAG = "--topic-stopped-in-searchlight";
 
