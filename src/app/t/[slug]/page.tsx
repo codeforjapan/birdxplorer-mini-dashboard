@@ -29,10 +29,7 @@ import { TimelineExplorer } from "@/app/_components/timeline/TimelineExplorer";
 // Blob の3ファイルは10分ごとにしか更新されないため(spec.md §5.2)、ISR も同じ間隔に揃える。
 export const revalidate = 600;
 
-// 事例はビルド時に列挙せず、初回アクセスで生成する
-export function generateStaticParams(): { slug: string }[] {
-  return [];
-}
+// generateStaticParams は置かない。searchParams を読むページを ISR にすると、初回生成が DYNAMIC_SERVER_USAGE で 500 になる
 
 type Params = Promise<{ slug: string }>;
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
