@@ -17,6 +17,8 @@ export type ActionResult =
       kind: "unauthorized" | "invalid" | "exists" | "conflict" | "unreadable" | "publish-failed" | "error";
       message: string;
       fieldErrors?: Record<string, string>;
+      /** publish-failed のときだけ。DB は進んでいるので、再保存はこの値で送る */
+      updatedAt?: number;
     };
 
 type Failure = Extract<ActionResult, { ok: false }>;
@@ -82,16 +84,22 @@ async function saveAndPublish(input: TenantInput, expectedUpdatedAt: number | nu
   if (result === "conflict") {
     return fail("conflict", "開いている間に他の人が保存しました。開き直して最新の内容を確かめてから保存してください");
   }
-  // DB は反映済み。画面が古い updatedAt のまま再保存して conflict にならないよう、公開の成否によらず再検証する
+  // DB は反映済みなので、公開の成否によらず一覧と編集画面を最新にする
   revalidate(input.slug);
+  let savedUpdatedAt: number | undefined;
   try {
     const saved = await getTenant(input.slug);
     if (saved === null) throw new Error("保存後に事例が読めません");
+    savedUpdatedAt = saved.updatedAt;
     await publishTenant(saved);
     return { ok: true, slug: saved.slug, updatedAt: saved.updatedAt };
   } catch (e) {
     console.error(`[admin] 公開に失敗しました: ${input.slug}`, e);
-    return fail("publish-failed", "DB には保存しましたが、公開設定（Blob）の更新に失敗しました。もう一度保存すると Blob に書き直します");
+    const f = fail(
+      "publish-failed",
+      "DB には保存しましたが、公開設定（Blob）の更新に失敗しました。もう一度保存すると Blob に書き直します",
+    );
+    return savedUpdatedAt === undefined ? f : { ...f, updatedAt: savedUpdatedAt };
   }
 }
 

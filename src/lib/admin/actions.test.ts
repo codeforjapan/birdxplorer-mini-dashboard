@@ -105,8 +105,15 @@ describe("createTenantAction", () => {
   it("公開に失敗したら publish-failed（DB には保存済み）", async () => {
     publishTenant.mockRejectedValue(new Error("blob down"));
     const r = await createTenantAction(formValuesFromRecord(record()));
-    expect(r).toMatchObject({ ok: false, kind: "publish-failed" });
+    expect(r).toMatchObject({ ok: false, kind: "publish-failed", updatedAt: 200 });
     expect(saveTenant).toHaveBeenCalled();
+  });
+
+  it("保存後の行が読めないまま失敗したら updatedAt は付けない", async () => {
+    getTenant.mockRejectedValue(new Error("bad row"));
+    const r = await createTenantAction(formValuesFromRecord(record()));
+    expect(r).toMatchObject({ ok: false, kind: "publish-failed" });
+    expect(r).not.toHaveProperty("updatedAt");
   });
 
   it("DB の失敗は error", async () => {
@@ -165,8 +172,10 @@ describe("updateTenantAction", () => {
 
   it("公開に失敗したら publish-failed", async () => {
     publishTenant.mockRejectedValue(new Error("blob down"));
+    getTenant.mockResolvedValueOnce(record()).mockResolvedValueOnce(record({ updatedAt: 201 }));
     await expect(updateTenantAction(SLUG, formValuesFromRecord(record()), 100)).resolves.toMatchObject({
       kind: "publish-failed",
+      updatedAt: 201,
     });
     expect(saveTenant).toHaveBeenCalled();
   });
@@ -207,8 +216,10 @@ describe("changeTenantStatusAction", () => {
 
   it("公開に失敗したら publish-failed", async () => {
     publishTenant.mockRejectedValue(new Error("blob down"));
+    getTenant.mockResolvedValueOnce(record()).mockResolvedValueOnce(record({ status: "active", updatedAt: 202 }));
     await expect(changeTenantStatusAction(SLUG, "active", 100)).resolves.toMatchObject({
       kind: "publish-failed",
+      updatedAt: 202,
     });
     expect(saveTenant).toHaveBeenCalled();
   });
