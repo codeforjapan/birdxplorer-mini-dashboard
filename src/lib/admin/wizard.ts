@@ -1,6 +1,7 @@
 import { newFormValues, toTenantInput, fieldErrors, type TenantFormValues } from "./form";
 import { safeParseTenantInput } from "../tenant/input";
 import { TENANT_PRESETS } from "../tenant/presets";
+import type { TenantTypeId } from "../tenant/types";
 
 // クライアントからも読み込むので、Node 専用の import は置かない
 
@@ -60,16 +61,31 @@ export function parseDraft(raw: string | null): { values: TenantFormValues; step
   if (typeof j !== "object" || j === null) return null;
   const { values, step } = j as { values?: unknown; step?: unknown };
   if (typeof values !== "object" || values === null) return null;
-  const v = values as Partial<TenantFormValues>;
-  if (typeof v.type !== "string" || !(v.type in TENANT_PRESETS)) return null;
-  const base = newFormValues(v.type);
-  const merged: TenantFormValues = {
-    ...base,
-    ...v,
-    taxonomy: { ...base.taxonomy, ...(typeof v.taxonomy === "object" && v.taxonomy !== null ? v.taxonomy : {}) },
-    keyMoments: Array.isArray(v.keyMoments) ? v.keyMoments : [],
-    officialSources: Array.isArray(v.officialSources) ? v.officialSources : [],
-  };
+  const v = values as Record<string, unknown>;
+  if (typeof v.type !== "string" || !Object.hasOwn(TENANT_PRESETS, v.type)) return null;
+  const base = newFormValues(v.type as TenantTypeId);
+  const merged: Record<string, unknown> = { ...base };
+  for (const [k, def] of Object.entries(base)) {
+    const x = v[k];
+    if (typeof def === "string" && typeof x === "string") merged[k] = x;
+    else if (typeof def === "number" && typeof x === "number" && Number.isFinite(x)) merged[k] = x;
+  }
+  merged.relevanceMode = v.relevanceMode === "score" || v.relevanceMode === "binary" ? v.relevanceMode : base.relevanceMode;
+  const tax: Record<string, unknown> = { ...base.taxonomy };
+  const rawTax = typeof v.taxonomy === "object" && v.taxonomy !== null ? (v.taxonomy as Record<string, unknown>) : {};
+  for (const k of Object.keys(base.taxonomy)) {
+    const x = rawTax[k];
+    if (typeof x === "string" || x === null) tax[k] = x;
+  }
+  merged.taxonomy = tax;
+  const objs = (x: unknown): Record<string, unknown>[] =>
+    Array.isArray(x) ? x.filter((e): e is Record<string, unknown> => typeof e === "object" && e !== null) : [];
+  merged.keyMoments = objs(v.keyMoments)
+    .filter((e) => typeof e.at === "string" && typeof e.markerLabel === "string")
+    .map((e) => ({ at: e.at, markerLabel: e.markerLabel }));
+  merged.officialSources = objs(v.officialSources)
+    .filter((e) => typeof e.label === "string" && typeof e.url === "string")
+    .map((e) => ({ label: e.label, url: e.url }));
   const s = typeof step === "number" && Number.isInteger(step) ? Math.min(Math.max(step, 0), WIZARD_STEPS.length - 1) : 0;
-  return { values: merged, step: s };
+  return { values: merged as TenantFormValues, step: s };
 }

@@ -42,4 +42,27 @@ describe("parseDraft", () => {
     expect(d?.values.keyMoments).toEqual([]);
     expect(d?.values.taxonomy).toEqual(newFormValues("election").taxonomy);
   });
+
+  const draft = (values: object) => parseDraft(JSON.stringify({ step: 0, values: { type: "disaster", ...values } }));
+
+  it("配列の要素が壊れていても描画できる形にする", () => {
+    const d = draft({ keyMoments: [null, { at: "x", markerLabel: "m" }, { at: 1 }], officialSources: [null, 3, { label: "a", url: "u" }] });
+    expect(d?.values.keyMoments).toEqual([{ at: "x", markerLabel: "m" }]);
+    expect(d?.values.officialSources).toEqual([{ label: "a", url: "u" }]);
+  });
+
+  it("文字列欄・数値欄・分類の型違いは既定に戻す", () => {
+    const base = newFormValues("disaster");
+    const d = draft({ searchKeywords: 5, binMinutes: "x", relevanceThreshold: null, taxonomy: { relevantExamples: 5, searchTermExamples: "ok" } });
+    expect(d?.values.searchKeywords).toBe("");
+    expect(d?.values.binMinutes).toBe(base.binMinutes);
+    expect(d?.values.relevanceThreshold).toBe(base.relevanceThreshold);
+    expect(d?.values.taxonomy.relevantExamples).toBe(base.taxonomy.relevantExamples);
+    expect(d?.values.taxonomy.searchTermExamples).toBe("ok");
+  });
+
+  it("type が prototype のキー名でも投げずに null", () => {
+    expect(() => draft({ type: "constructor" })).not.toThrow();
+    expect(draft({ type: "constructor" })).toBeNull();
+  });
 });
