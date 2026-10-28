@@ -1,0 +1,362 @@
+"use client";
+
+import type { ReactNode } from "react";
+import { isPresetValue, type TenantFormValues } from "@/lib/admin/form";
+import { TENANT_PRESETS } from "@/lib/tenant/presets";
+import type { Taxonomy, TenantTypeId } from "@/lib/tenant/types";
+
+export type FormSection = "basic" | "period" | "taxonomy" | "display" | "all";
+
+type Props = {
+  values: TenantFormValues;
+  onChange: (next: TenantFormValues) => void;
+  errors: Record<string, string>;
+  section: FormSection;
+  slugEditable: boolean;
+};
+
+const INPUT = "w-full rounded-md border border-line bg-card px-2.5 py-1.5 text-[13px] text-heading";
+const SMALL_BTN = "rounded border border-line px-2 py-1 text-[12px] text-body hover:text-heading";
+
+const TYPE_FLAVOR: Record<TenantTypeId, string> = { disaster: "熊本", election: "沖縄" };
+
+const TAXONOMY_FIELDS: { key: keyof Taxonomy; label: string; rows: number }[] = [
+  { key: "searchTermExamples", label: "検索語の例", rows: 2 },
+  { key: "relevantExamples", label: "関連ありの例", rows: 8 },
+  { key: "irrelevantExamples", label: "関連なしの例", rows: 5 },
+  { key: "clusterNamingGoodExamples", label: "クラスタ命名の良い例（複数）", rows: 2 },
+  { key: "clusterNamingBadExamples", label: "クラスタ命名の悪い例（複数）", rows: 2 },
+  { key: "clusterNamingGoodExampleSingle", label: "クラスタ命名の良い例（1件）", rows: 1 },
+  { key: "clusterNamingBadExampleSingle", label: "クラスタ命名の悪い例（1件）", rows: 1 },
+  { key: "overMergeCounterExample", label: "統合してはいけない例", rows: 6 },
+  { key: "namingNeutralityRule", label: "命名の中立規約（選挙型のみ）", rows: 4 },
+];
+
+function Field({ label, error, hint, children }: { label: string; error?: string; hint?: ReactNode; children: ReactNode }) {
+  return (
+    <label className="flex flex-col gap-1 text-[12px] font-semibold text-strong">
+      {label}
+      {children}
+      {hint !== undefined && <span className="text-[12px] font-normal text-muted">{hint}</span>}
+      {error !== undefined && <span className="text-[12px] font-normal text-accent">{error}</span>}
+    </label>
+  );
+}
+
+function Block({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="flex flex-col gap-3 rounded-lg border border-line bg-card p-4">
+      <h2 className="text-[15px] font-bold text-heading">{title}</h2>
+      {children}
+    </section>
+  );
+}
+
+export function TenantFormSections({ values, onChange, errors, section, slugEditable }: Props) {
+  const show = (s: FormSection) => section === "all" || section === s;
+  const set = <K extends keyof TenantFormValues>(key: K, v: TenantFormValues[K]) =>
+    onChange({ ...values, [key]: v });
+  const text = (key: keyof TenantFormValues & string, label: string, hint?: ReactNode) => (
+    <Field label={label} error={errors[key]} hint={hint}>
+      <input
+        className={INPUT}
+        value={values[key] as string}
+        onChange={(e) => set(key, e.target.value as never)}
+      />
+    </Field>
+  );
+  const preset = TENANT_PRESETS[values.type];
+
+  // 型を替えたとき、まだ旧型の既定のままの欄だけ新しい型の既定へ追従させる
+  const changeType = (type: TenantTypeId) => {
+    const oldP = TENANT_PRESETS[values.type];
+    const newP = TENANT_PRESETS[type];
+    const taxonomy = { ...values.taxonomy };
+    for (const f of TAXONOMY_FIELDS) {
+      if (taxonomy[f.key] === oldP.taxonomy[f.key]) (taxonomy[f.key] as string | null) = newP.taxonomy[f.key];
+    }
+    onChange({
+      ...values,
+      type,
+      taxonomy,
+      relevanceMode: values.relevanceMode === oldP.relevanceMode ? newP.relevanceMode : values.relevanceMode,
+      relevanceThreshold:
+        values.relevanceThreshold === oldP.relevanceThreshold ? newP.relevanceThreshold : values.relevanceThreshold,
+      binMinutes: values.binMinutes === oldP.binMinutes ? newP.binMinutes : values.binMinutes,
+    });
+  };
+
+  const setNumber = (key: "relevanceThreshold" | "binMinutes", raw: string) =>
+    set(key, (raw === "" ? NaN : Number(raw)) as never);
+  const numValue = (n: number) => (Number.isNaN(n) ? "" : String(n));
+
+  return (
+    <div className="flex flex-col gap-4">
+      {errors._form !== undefined && (
+        <p role="alert" className="rounded-md border border-accent px-3 py-2 text-[13px] text-accent">
+          {errors._form}
+        </p>
+      )}
+
+      {show("basic") && (
+        <Block title="基本">
+          {text("siteTitle", "サイトタイトル")}
+          <Field label="slug" error={errors.slug}>
+            {slugEditable ? (
+              <input
+                className={`${INPUT} tabular`}
+                value={values.slug}
+                onChange={(e) => set("slug", e.target.value)}
+              />
+            ) : (
+              <span className="tabular text-[13px] font-normal text-heading">{values.slug}</span>
+            )}
+          </Field>
+          <Field label="型" error={errors.type}>
+            <select
+              className={INPUT}
+              value={values.type}
+              onChange={(e) => changeType(e.target.value as TenantTypeId)}
+            >
+              {(Object.keys(TENANT_PRESETS) as TenantTypeId[]).map((t) => (
+                <option key={t} value={t}>
+                  {TENANT_PRESETS[t].label}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </Block>
+      )}
+
+      {show("period") && (
+        <Block title="期間と検索語">
+          <Field label="開始日時（JST）" error={errors.monitorStartAt}>
+            <input
+              type="datetime-local"
+              className={INPUT}
+              value={values.monitorStartAt}
+              onChange={(e) => set("monitorStartAt", e.target.value)}
+            />
+          </Field>
+          <Field label="終了日（JST）" error={errors.monitorEndDate}>
+            <input
+              type="date"
+              className={INPUT}
+              value={values.monitorEndDate}
+              onChange={(e) => set("monitorEndDate", e.target.value)}
+            />
+          </Field>
+          <Field label="検索語（1行に1語）" error={errors.searchKeywords}>
+            <textarea
+              className={INPUT}
+              rows={6}
+              value={values.searchKeywords}
+              onChange={(e) => set("searchKeywords", e.target.value)}
+            />
+          </Field>
+        </Block>
+      )}
+
+      {show("taxonomy") && (
+        <Block title="分類の例文">
+          <p className="text-[12px] text-muted">空にすると型の既定（{preset.label}）を使います。</p>
+          {TAXONOMY_FIELDS.map(({ key, label, rows }) => {
+            const atPreset = isPresetValue(values, key);
+            return (
+              <Field key={key} label={label} error={errors[`taxonomy.${key}`]}>
+                <textarea
+                  className={INPUT}
+                  rows={rows}
+                  value={values.taxonomy[key] ?? ""}
+                  onChange={(e) => set("taxonomy", { ...values.taxonomy, [key]: e.target.value })}
+                />
+                <span className="flex items-center gap-2 text-[12px] font-normal text-muted">
+                  {atPreset ? (
+                    <span>型の既定のまま（{TYPE_FLAVOR[values.type]}の文言）</span>
+                  ) : (
+                    <button
+                      type="button"
+                      className={SMALL_BTN}
+                      onClick={() => set("taxonomy", { ...values.taxonomy, [key]: preset.taxonomy[key] })}
+                    >
+                      既定に戻す
+                    </button>
+                  )}
+                </span>
+              </Field>
+            );
+          })}
+          <Field label="関連性の方式" error={errors.relevanceMode}>
+            <select
+              className={INPUT}
+              value={values.relevanceMode}
+              onChange={(e) => set("relevanceMode", e.target.value as TenantFormValues["relevanceMode"])}
+            >
+              <option value="score">score（点数で残す）</option>
+              <option value="binary">binary（関連あり／なし）</option>
+            </select>
+          </Field>
+          <Field label="しきい値" error={errors.relevanceThreshold} hint={`既定 ${preset.relevanceThreshold}`}>
+            <input
+              type="number"
+              className={`${INPUT} tabular`}
+              value={numValue(values.relevanceThreshold)}
+              onChange={(e) => setNumber("relevanceThreshold", e.target.value)}
+            />
+          </Field>
+          <Field label="集計の刻み（分）" error={errors.binMinutes} hint={`既定 ${preset.binMinutes}`}>
+            <input
+              type="number"
+              className={`${INPUT} tabular`}
+              value={numValue(values.binMinutes)}
+              onChange={(e) => setNumber("binMinutes", e.target.value)}
+            />
+          </Field>
+        </Block>
+      )}
+
+      {show("display") && (
+        <Block title="表示まわり">
+          <Field label="説明" error={errors.siteDescription}>
+            <textarea
+              className={INPUT}
+              rows={3}
+              value={values.siteDescription}
+              onChange={(e) => set("siteDescription", e.target.value)}
+            />
+          </Field>
+          {text("eyebrowLabel", "eyebrow")}
+          {text("scheduleLabel", "schedule")}
+
+          <div className="flex flex-col gap-2">
+            <p className="text-[12px] font-semibold text-strong">主な出来事</p>
+            {errors.keyMoments !== undefined && <p className="text-[12px] text-accent">{errors.keyMoments}</p>}
+            {values.keyMoments.map((k, i) => (
+              <div key={i} className="flex flex-col gap-1 rounded-md border border-line p-2">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="datetime-local"
+                    className={INPUT}
+                    value={k.at}
+                    onChange={(e) =>
+                      set(
+                        "keyMoments",
+                        values.keyMoments.map((m, j) => (j === i ? { ...m, at: e.target.value } : m)),
+                      )
+                    }
+                  />
+                  <input
+                    className={INPUT}
+                    placeholder="マーカーの文言"
+                    value={k.markerLabel}
+                    onChange={(e) =>
+                      set(
+                        "keyMoments",
+                        values.keyMoments.map((m, j) => (j === i ? { ...m, markerLabel: e.target.value } : m)),
+                      )
+                    }
+                  />
+                  <button
+                    type="button"
+                    className={SMALL_BTN}
+                    onClick={() =>
+                      set(
+                        "keyMoments",
+                        values.keyMoments.filter((_, j) => j !== i),
+                      )
+                    }
+                  >
+                    削除
+                  </button>
+                </div>
+                {errors[`keyMoments.${i}.at`] !== undefined && (
+                  <p className="text-[12px] text-accent">{errors[`keyMoments.${i}.at`]}</p>
+                )}
+                {errors[`keyMoments.${i}.markerLabel`] !== undefined && (
+                  <p className="text-[12px] text-accent">{errors[`keyMoments.${i}.markerLabel`]}</p>
+                )}
+              </div>
+            ))}
+            <button
+              type="button"
+              className={`${SMALL_BTN} self-start`}
+              onClick={() => set("keyMoments", [...values.keyMoments, { at: "", markerLabel: "" }])}
+            >
+              ＋ 行を足す
+            </button>
+          </div>
+          {text("keyMomentLabel", "keyMomentLabel")}
+          {text("keyMomentValue", "keyMomentValue")}
+
+          {text("llmContextPhrase", "LLM 文脈フレーズ")}
+          {text("llmContextPhraseCompact", "LLM 文脈フレーズ（短縮）")}
+          {text("llmContextPhraseShort", "LLM 文脈フレーズ（最短）")}
+
+          <div className="flex flex-col gap-2">
+            <p className="text-[12px] font-semibold text-strong">公式情報</p>
+            {text("officialSourcesIntro", "前置き")}
+            {errors.officialSources !== undefined && <p className="text-[12px] text-accent">{errors.officialSources}</p>}
+            {values.officialSources.map((s, i) => (
+              <div key={i} className="flex flex-col gap-1 rounded-md border border-line p-2">
+                <div className="flex items-center gap-2">
+                  <input
+                    className={INPUT}
+                    placeholder="名称"
+                    value={s.label}
+                    onChange={(e) =>
+                      set(
+                        "officialSources",
+                        values.officialSources.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)),
+                      )
+                    }
+                  />
+                  <input
+                    className={INPUT}
+                    placeholder="https://"
+                    value={s.url}
+                    onChange={(e) =>
+                      set(
+                        "officialSources",
+                        values.officialSources.map((x, j) => (j === i ? { ...x, url: e.target.value } : x)),
+                      )
+                    }
+                  />
+                  <button
+                    type="button"
+                    className={SMALL_BTN}
+                    onClick={() =>
+                      set(
+                        "officialSources",
+                        values.officialSources.filter((_, j) => j !== i),
+                      )
+                    }
+                  >
+                    削除
+                  </button>
+                </div>
+                {errors[`officialSources.${i}.label`] !== undefined && (
+                  <p className="text-[12px] text-accent">{errors[`officialSources.${i}.label`]}</p>
+                )}
+                {errors[`officialSources.${i}.url`] !== undefined && (
+                  <p className="text-[12px] text-accent">{errors[`officialSources.${i}.url`]}</p>
+                )}
+              </div>
+            ))}
+            <button
+              type="button"
+              className={`${SMALL_BTN} self-start`}
+              onClick={() => set("officialSources", [...values.officialSources, { label: "", url: "" }])}
+            >
+              ＋ 行を足す
+            </button>
+          </div>
+          {text("officialSourcesDisclaimer", "注意書き")}
+
+          {text("issuesUrl", "issuesUrl")}
+          {text("githubRepo", "githubRepo")}
+          {text("appTitle", "appTitle")}
+        </Block>
+      )}
+    </div>
+  );
+}
