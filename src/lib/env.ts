@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { parseAllowlist } from "@/lib/admin/allowlist";
 
 /**
  * 環境変数の検証。
@@ -114,3 +115,18 @@ export function hasSearchlightConfig(): boolean {
   return searchlightSchema.safeParse(process.env).success;
 }
 
+
+const adminSchema = z.object({
+  ADMIN_ORIGIN: z.url().transform((v) => v.replace(/\/+$/, "")),
+});
+
+/** 許可リスト。未設定・空なら空集合で全員拒否になる（例外にしない）。 */
+export function adminEmails(): Set<string> {
+  return parseAllowlist(process.env.ADMIN_EMAILS);
+}
+
+/** 管理画面を開けるホスト。ログインはここでだけ行うので、使う箇所でだけ評価する。 */
+export function adminEnv(): { ADMIN_EMAILS: Set<string>; ADMIN_ORIGIN: string } {
+  const { ADMIN_ORIGIN } = parse(adminSchema, "管理画面");
+  return { ADMIN_EMAILS: adminEmails(), ADMIN_ORIGIN };
+}
