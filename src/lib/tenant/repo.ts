@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { bigintToNumber, nullableBigintToNumber, parseJsonbMaybe, sql } from "../db";
 import { appTitleSchema, githubRepoSchema, httpUrlSchema } from "./fields";
+import type { TenantInput } from "./input";
 import type { TenantOverrides, TenantRecord, TenantSettings } from "./types";
 
 /**
@@ -95,32 +96,88 @@ export async function listTenants(): Promise<TenantRecord[]> {
   return rows.map(toRecord);
 }
 
+// upsertTenant と saveTenant で条件が食い違うと停止記録の消え方が変わるので、式を1か所に置く
+function searchlightStoppedAtExpr(newSettings: string, newStatus: string): string {
+  return `case
+        when (tenants.settings->>'searchlightTopicId') is distinct from (${newSettings}->>'searchlightTopicId')
+          or (${newSettings}->>'monitorEndDate') > (tenants.settings->>'monitorEndDate')
+          or (tenants.status = 'ended' and ${newStatus} <> 'ended')
+        then null
+        else tenants.searchlight_stopped_at
+      end`;
+}
+
 /**
  * 設定を作成または更新する。searchlight_stopped_at は原則上書きしない
  * （終了処理の記録であり、設定編集で消えると Searchlight を二重に止める／止め忘れる）。
  * ただし topic を差し替えたとき、終了日を延ばしたとき、ended から戻したときは消す。前者は新しい topic を
  * まだ止めておらず、後の2つは再開した収集を次の終了時にまた止める必要があるため。
  */
-export async function upsertTenant(
-  rec: Omit<TenantRecord, "updatedAt" | "searchlightStoppedAt">,
-): Promise<void> {
-  await sql()`
-    insert into tenants (slug, type, status, settings, overrides, updated_at)
-    values (${rec.slug}, ${rec.type}, ${rec.status}, ${JSON.stringify(rec.settings)}::jsonb,
-            ${JSON.stringify(rec.overrides)}::jsonb, ${Date.now()})
+export async function upsertTenant(rec: TenantInput): Promise<void> {
+  await sql().query(
+    `insert into tenants (slug, type, status, settings, overrides, updated_at)
+    values ($1, $2, $3, $4::jsonb, $5::jsonb, $6)
     on conflict (slug) do update set
       type = excluded.type,
       status = excluded.status,
       settings = excluded.settings,
       overrides = excluded.overrides,
       updated_at = excluded.updated_at,
-      searchlight_stopped_at = case
-        when (tenants.settings->>'searchlightTopicId') is distinct from (excluded.settings->>'searchlightTopicId')
-          or (excluded.settings->>'monitorEndDate') > (tenants.settings->>'monitorEndDate')
-          or (tenants.status = 'ended' and excluded.status <> 'ended')
-        then null
-        else tenants.searchlight_stopped_at
-      end`;
+      searchlight_stopped_at = ${searchlightStoppedAtExpr("excluded.settings", "excluded.status")}`,
+    [rec.slug, rec.type, rec.status, JSON.stringify(rec.settings), JSON.stringify(rec.overrides), Date.now()],
+  );
+}
+
+export type SaveResult = "saved" | "conflict" | "exists";
+
+/**
+ * 画面からの保存。後勝ちで上書きしないよう、新規（null）は既存 slug を弾き、
+ * 更新は開いた時点の updated_at と一致するときだけ書く。
+ * updated_at は同一ミリ秒の連続保存でも一致し直さないよう、必ず前の値より大きくする。
+ */
+export async function saveTenant(input: TenantInput, expectedUpdatedAt: number | null): Promise<SaveResult> {
+  const settings = JSON.stringify(input.settings);
+  const overrides = JSON.stringify(input.overrides);
+  if (expectedUpdatedAt === null) {
+    const rows = await sql().query(
+      `insert into tenants (slug, type, status, settings, overrides, updated_at)
+      values ($1, $2, $3, $4::jsonb, $5::jsonb, $6)
+      on conflict (slug) do nothing
+      returning slug`,
+      [input.slug, input.type, input.status, settings, overrides, Date.now()],
+    );
+    return rows.length === 0 ? "exists" : "saved";
+  }
+  const rows = await sql().query(
+    `update tenants set
+      type = $2,
+      status = $3,
+      settings = $4::jsonb,
+      overrides = $5::jsonb,
+      updated_at = greatest($6::bigint, updated_at + 1),
+      searchlight_stopped_at = ${searchlightStoppedAtExpr("$4::jsonb", "$3")}
+    where slug = $1 and updated_at = $7
+    returning slug`,
+    [input.slug, input.type, input.status, settings, overrides, Date.now(), expectedUpdatedAt],
+  );
+  return rows.length === 0 ? "conflict" : "saved";
+}
+
+export type TenantListItem =
+  | { slug: string; record: TenantRecord }
+  | { slug: string; record: null; error: string };
+
+/** 1行でも壊れていると一覧全体が落ちて直せなくなるので、行ごとに読んで失敗は理由として返す */
+export async function listTenantsLenient(): Promise<TenantListItem[]> {
+  const rows = await sql()`select * from tenants order by slug`;
+  return rows.map((row): TenantListItem => {
+    const slug = String((row as { slug?: unknown }).slug);
+    try {
+      return { slug, record: toRecord(row) };
+    } catch (err) {
+      return { slug, record: null, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
 }
 
 export async function markSearchlightStopped(slug: string, at: number): Promise<void> {

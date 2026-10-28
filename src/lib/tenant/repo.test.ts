@@ -131,6 +131,66 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("tenant repo（実 DB）", () =>
     expect(slugs).toContain("repo-test");
   });
 
+  it("saveTenant: 新規は saved、同じ slug は exists で何も書かない", async () => {
+    expect(await repo.saveTenant(rec, null)).toBe("saved");
+    expect(await repo.saveTenant({ ...rec, status: "ended" }, null)).toBe("exists");
+    const got = await repo.getTenant("repo-test");
+    expect(got?.status).toBe("active");
+    expect((await repo.listTenants()).filter((t) => t.slug === "repo-test")).toHaveLength(1);
+  });
+
+  it("saveTenant: updatedAt が一致したときだけ更新し、古い値は conflict", async () => {
+    await repo.saveTenant(rec, null);
+    const first = (await repo.getTenant("repo-test"))!.updatedAt;
+    expect(await repo.saveTenant({ ...rec, overrides: { binMinutes: 10 } }, first)).toBe("saved");
+    const second = (await repo.getTenant("repo-test"))!;
+    expect(second.updatedAt).toBeGreaterThan(first);
+    expect(await repo.saveTenant({ ...rec, overrides: { binMinutes: 99 } }, first)).toBe("conflict");
+    expect((await repo.getTenant("repo-test"))?.overrides).toEqual({ binMinutes: 10 });
+  });
+
+  it("saveTenant: 同一ミリ秒の連続保存でも updatedAt は増える", async () => {
+    await repo.saveTenant(rec, null);
+    let at = (await repo.getTenant("repo-test"))!.updatedAt;
+    for (let i = 0; i < 5; i++) {
+      expect(await repo.saveTenant(rec, at)).toBe("saved");
+      const next = (await repo.getTenant("repo-test"))!.updatedAt;
+      expect(next).toBeGreaterThan(at);
+      at = next;
+    }
+  });
+
+  it("saveTenant: 存在しない slug への更新は conflict", async () => {
+    expect(await repo.saveTenant(rec, 123)).toBe("conflict");
+    expect(await repo.getTenant("repo-test")).toBeNull();
+  });
+
+  it("saveTenant: ended から戻すと searchlight_stopped_at を消す", async () => {
+    await repo.upsertTenant({ ...rec, status: "ended" });
+    await repo.markSearchlightStopped("repo-test", 12345);
+    const at = (await repo.getTenant("repo-test"))!.updatedAt;
+    expect(await repo.saveTenant({ ...rec, status: "active" }, at)).toBe("saved");
+    expect((await repo.getTenant("repo-test"))?.searchlightStoppedAt).toBeNull();
+  });
+
+  it("listTenantsLenient: 壊れた行は error 付きで返し、他の行は読める", async () => {
+    await repo.upsertTenant(rec);
+    await db.sql()`delete from tenants where slug = 'repo-broken'`;
+    await db.sql()`
+      insert into tenants (slug, type, status, settings, overrides, updated_at)
+      values ('repo-broken', 'disaster', 'active', '{"slug":"repo-broken"}'::jsonb, '{}'::jsonb, 1)`;
+    try {
+      const list = await repo.listTenantsLenient();
+      const ok = list.find((i) => i.slug === "repo-test");
+      const broken = list.find((i) => i.slug === "repo-broken");
+      expect(ok?.record?.slug).toBe("repo-test");
+      expect(broken?.record).toBeNull();
+      expect(broken && "error" in broken ? broken.error.length : 0).toBeGreaterThan(0);
+    } finally {
+      await db.sql()`delete from tenants where slug = 'repo-broken'`;
+    }
+  });
+
   it("migrate() を2回呼んでも2回目は何も流さない", async () => {
     const count = async () => {
       const rows = await db.sql().query("select count(*)::int as n, max(applied_at) as last from schema_migrations");
