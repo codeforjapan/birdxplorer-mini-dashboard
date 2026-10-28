@@ -173,6 +173,9 @@ export function TenantFormSections({ values, onChange, errors, section, slugEdit
                 <span className="flex items-center gap-2 text-[12px] font-normal text-muted">
                   {atPreset ? (
                     <span>型の既定のまま（{TYPE_FLAVOR[values.type]}の文言）</span>
+                  ) : (values.taxonomy[key] ?? "").trim() === "" ? (
+                    // 保存時は空を「上書きなし」として扱うので、表示もそれに揃える
+                    <span>空のため型の既定（{TYPE_FLAVOR[values.type]}の文言）を使います</span>
                   ) : (
                     <button
                       type="button"
