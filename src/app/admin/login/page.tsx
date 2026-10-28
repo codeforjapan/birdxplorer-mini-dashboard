@@ -12,9 +12,11 @@ export default async function LoginPage({
     <main className="mx-auto w-full max-w-sm px-4 py-16">
       <div className="rounded-lg border border-line bg-card p-6">
         <h1 className="text-[20px] font-bold text-heading">管理画面</h1>
-        {error === "AccessDenied" && (
+        {error !== undefined && (
           <p role="alert" className="mt-3 text-[13px] text-strong">
-            このアカウントは許可されていません
+            {error === "AccessDenied"
+              ? "このアカウントは許可されていません"
+              : "ログインに失敗しました。もう一度試してください"}
           </p>
         )}
         <form
