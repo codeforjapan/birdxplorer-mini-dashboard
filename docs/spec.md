@@ -438,7 +438,14 @@ DATABASE_URL                  # Neon Postgres（プーラ接続文字列）
 TENANT_PARENT_DOMAIN          # {slug}.<親ドメイン> で事例を引く
 TENANT_HOST_ALIASES           # ホスト名 → slug の別名（JSON）
 SEARCHLIGHT_*                 # 任意
+ADMIN_EMAILS                  # 管理画面（/admin）に入れるメール。カンマ区切り。空なら誰も入れない
+ADMIN_ORIGIN                  # 管理画面でログインできる唯一の origin（他ホストは同じパスへリダイレクト）
+AUTH_SECRET                   # Auth.js のセッション署名鍵（openssl rand -base64 32）
+AUTH_GOOGLE_ID                # Google OAuth クライアント
+AUTH_GOOGLE_SECRET
 ```
+
+管理画面の `ADMIN_*` / `AUTH_*` は Google ログインのためのもので、設定手順は `docs/tenant-runbook.md`。
 
 ---
 
