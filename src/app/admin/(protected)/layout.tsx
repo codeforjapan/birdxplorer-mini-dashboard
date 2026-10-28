@@ -1,18 +1,11 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { signOut } from "@/auth";
-import { requireAdmin } from "@/lib/admin/session";
+import { requireAdminOrRedirect } from "@/lib/admin/session";
 
 export const dynamic = "force-dynamic";
 
 export default async function ProtectedLayout({ children }: { children: React.ReactNode }) {
-  let email: string | null = null;
-  try {
-    email = (await requireAdmin()).email;
-  } catch {
-    // redirect() は例外で動くので try の外で呼ぶ
-  }
-  if (email === null) redirect("/admin/login");
+  const { email } = await requireAdminOrRedirect();
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-6">

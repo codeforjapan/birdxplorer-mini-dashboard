@@ -20,6 +20,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       </main>
     );
   }
+  // 利便のための転送で、防御ではない（認証 cookie はホスト固有で、page / action 側の requireAdmin が拒否する）
   const target = adminRedirectTarget((await headers()).get("host"), "/admin", origin);
   if (target) redirect(target);
   return <>{children}</>;

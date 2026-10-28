@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ensureMigrated } from "@/app/api/cron/_lib/migrate-once";
+import { requireAdminOrRedirect } from "@/lib/admin/session";
 import { tenantHostEnv } from "@/lib/env";
 import { parseHostRules } from "@/lib/tenant/host";
 import { listTenantsLenient } from "@/lib/tenant/repo";
@@ -28,6 +29,7 @@ function publicUrls(slug: string, rules: ReturnType<typeof parseHostRules>): str
 }
 
 export default async function AdminListPage() {
+  await requireAdminOrRedirect();
   // 新しい DB にはまだ tenants が無いことがある
   await ensureMigrated();
   const items = await listTenantsLenient();
