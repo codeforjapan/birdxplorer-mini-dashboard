@@ -203,12 +203,12 @@ function Summary({ values, errors }: { values: TenantFormValues; errors: Record<
     ["型", TENANT_PRESETS[values.type].label],
     ["開始日時（JST）", values.monitorStartAt],
     ["終了日（JST）", values.monitorEndDate],
-    ["検索語", values.searchKeywords.split("\n").filter((k) => k.trim() !== "").join("、")],
-    ["関連性の方式", values.relevanceMode],
+    ["検索語", [...new Set(values.searchKeywords.split("\n").map((k) => k.trim()).filter((k) => k !== ""))].join("、")],
+    ["関連性の方式", values.relevanceMode === "score" ? "点数" : "関連あり／なしの2択"],
     ["しきい値", String(values.relevanceThreshold)],
-    ["集計の刻み（分）", String(values.binMinutes)],
-    ["主な出来事", `${values.keyMoments.length} 件`],
-    ["公式情報", `${values.officialSources.length} 件`],
+    ["グラフの集計単位（分）", String(values.binMinutes)],
+    ["グラフに引く縦線", `${values.keyMoments.length} 件`],
+    ["公式情報リンク", `${values.officialSources.length} 件`],
   ];
   return (
     <section className="flex flex-col gap-3 rounded-lg border border-line bg-card p-4">

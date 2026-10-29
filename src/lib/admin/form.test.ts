@@ -61,6 +61,12 @@ describe("newFormValues / toTenantInput", () => {
     expect(toTenantInput(v, base).settings.searchKeywords).toEqual(["熊本", "地震"]);
   });
 
+  it("searchKeywords の重複は最初の1つだけ残す", () => {
+    const v = newFormValues("disaster");
+    v.searchKeywords = "熊本\n地震\n 熊本 ";
+    expect(toTenantInput(v, base).settings.searchKeywords).toEqual(["熊本", "地震"]);
+  });
+
   it("searchlightTopicId と status は base から", () => {
     const r = toTenantInput(newFormValues("disaster"), { status: "active", searchlightTopicId: "t1" });
     expect(r.settings.searchlightTopicId).toBe("t1");

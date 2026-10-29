@@ -11,7 +11,13 @@ function isRealDate(s: string): boolean {
   return !Number.isNaN(d.getTime()) && d.toISOString().startsWith(s);
 }
 
-const nonEmpty = z.string().min(1);
+const nonEmpty = z.string().min(1, "入力してください");
+
+const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
+
+function jstDateOf(ms: number): string {
+  return new Date(ms + JST_OFFSET_MS).toISOString().slice(0, 10);
+}
 
 const settingsSchema = z
   .object({
@@ -20,16 +26,17 @@ const settingsSchema = z
     siteDescription: nonEmpty,
     eyebrowLabel: nonEmpty,
     scheduleLabel: z.string(),
-    monitorStartAt: z.number().int().positive(),
+    monitorStartAt: z.number({ error: "日時を入力してください" }).int().positive(),
     monitorEndDate: z
       .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .min(1, { error: "日付を入力してください", abort: true })
+      .regex(/^\d{4}-\d{2}-\d{2}$/, { error: "YYYY-MM-DD の形にしてください", abort: true })
       .refine(isRealDate, "実在しない日付です"),
-    searchKeywords: z.array(nonEmpty).min(1),
+    searchKeywords: z.array(nonEmpty).min(1, "1つ以上入力してください"),
     llmContextPhrase: nonEmpty,
     llmContextPhraseCompact: nonEmpty,
     llmContextPhraseShort: nonEmpty,
-    keyMoments: z.array(z.object({ at: z.number(), markerLabel: z.string() }).strict()),
+    keyMoments: z.array(z.object({ at: z.number({ error: "日時を入力してください" }), markerLabel: z.string() }).strict()),
     keyMomentLabel: z.string(),
     keyMomentValue: z.string(),
     githubRepo: githubRepoSchema,
@@ -40,7 +47,12 @@ const settingsSchema = z
     officialSourcesDisclaimer: z.string(),
     searchlightTopicId: z.string().min(1).nullable(),
   })
-  .strict();
+  .strict()
+  // 開始より前に終わる事例は収集が一度も走らず、エラーも出ないまま空のページになる
+  .refine((s) => s.monitorEndDate >= jstDateOf(s.monitorStartAt), {
+    message: "終了日は開始日以降にしてください",
+    path: ["monitorEndDate"],
+  });
 
 const overridesSchema = z
   .object({
@@ -79,9 +91,12 @@ const inputSchema = z
     path: ["settings", "slug"],
   });
 
+// 個別に文言を付けていない違反も、画面を使うチームの人が読める日本語にする
+const JA = { error: z.locales.ja().localeError };
+
 /** 純関数。外部入力（JSON）を検証して型付きの値にする。違反は ZodError。 */
 export function parseTenantInput(raw: unknown): TenantInput {
-  return inputSchema.parse(raw);
+  return inputSchema.parse(raw, JA);
 }
 
 export type SafeParseTenantInputResult =
@@ -90,7 +105,7 @@ export type SafeParseTenantInputResult =
 
 /** 画面用。例外にせず、違反を path（"settings.siteTitle" のドット連結）付きで返す。 */
 export function safeParseTenantInput(raw: unknown): SafeParseTenantInputResult {
-  const r = inputSchema.safeParse(raw);
+  const r = inputSchema.safeParse(raw, JA);
   if (r.success) return { ok: true, value: r.data };
   return { ok: false, issues: r.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })) };
 }

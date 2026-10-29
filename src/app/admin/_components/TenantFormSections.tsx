@@ -100,8 +100,12 @@ export function TenantFormSections({ values, onChange, errors, section, slugEdit
 
       {show("basic") && (
         <Block title="基本">
-          {text("siteTitle", "サイトタイトル")}
-          <Field label="slug" error={errors.slug}>
+          {text("siteTitle", "サイトタイトル", "公開ページの見出しとブラウザのタブに出ます")}
+          <Field
+            label="slug"
+            error={errors.slug}
+            hint={slugEditable ? "URL に使う識別子（英小文字・数字・ハイフン）。作成後は変えられません" : undefined}
+          >
             {slugEditable ? (
               <input
                 className={`${INPUT} tabular`}
@@ -195,11 +199,15 @@ export function TenantFormSections({ values, onChange, errors, section, slugEdit
               value={values.relevanceMode}
               onChange={(e) => set("relevanceMode", e.target.value as TenantFormValues["relevanceMode"])}
             >
-              <option value="score">score（点数で残す）</option>
-              <option value="binary">binary（関連あり／なし）</option>
+              <option value="score">点数（しきい値以上を残す）</option>
+              <option value="binary">関連あり／なしの2択</option>
             </select>
           </Field>
-          <Field label="しきい値" error={errors.relevanceThreshold} hint={`既定 ${preset.relevanceThreshold}`}>
+          <Field
+            label="しきい値（0〜100）"
+            error={errors.relevanceThreshold}
+            hint={`この点数以上のノートを残します。点数方式のときだけ使います。既定 ${preset.relevanceThreshold}`}
+          >
             <input
               type="number"
               className={`${INPUT} tabular`}
@@ -207,7 +215,7 @@ export function TenantFormSections({ values, onChange, errors, section, slugEdit
               onChange={(e) => setNumber("relevanceThreshold", e.target.value)}
             />
           </Field>
-          <Field label="集計の刻み（分）" error={errors.binMinutes} hint={`既定 ${preset.binMinutes}`}>
+          <Field label="グラフの集計単位（分）" error={errors.binMinutes} hint={`既定 ${preset.binMinutes}`}>
             <input
               type="number"
               className={`${INPUT} tabular`}
@@ -220,7 +228,7 @@ export function TenantFormSections({ values, onChange, errors, section, slugEdit
 
       {show("display") && (
         <Block title="表示まわり">
-          <Field label="説明" error={errors.siteDescription}>
+          <Field label="サイトの説明" error={errors.siteDescription} hint="検索結果や SNS で共有したときに出る説明文">
             <textarea
               className={INPUT}
               rows={3}
@@ -228,11 +236,12 @@ export function TenantFormSections({ values, onChange, errors, section, slugEdit
               onChange={(e) => set("siteDescription", e.target.value)}
             />
           </Field>
-          {text("eyebrowLabel", "eyebrow")}
-          {text("scheduleLabel", "schedule")}
+          {text("eyebrowLabel", "見出しの上の小さなラベル", "例: BirdXplorer コミュニティノート観測")}
+          {text("scheduleLabel", "見出しの下の日時", "空でも可。例: 2026年7月28日 16:27 発生（M7.1）")}
 
           <div className="flex flex-col gap-2">
-            <p className="text-[12px] font-semibold text-strong">主な出来事</p>
+            <p className="text-[12px] font-semibold text-strong">グラフに引く縦線（主な出来事）</p>
+            <p className="text-[12px] text-muted">時系列グラフに縦線と文言を出します。例: 本震 16:27</p>
             {errors.keyMoments !== undefined && <p className="text-[12px] text-accent">{errors.keyMoments}</p>}
             {values.keyMoments.map((k, i) => (
               <div key={i} className="flex flex-col gap-1 rounded-md border border-line p-2">
@@ -288,16 +297,19 @@ export function TenantFormSections({ values, onChange, errors, section, slugEdit
               ＋ 行を足す
             </button>
           </div>
-          {text("keyMomentLabel", "keyMomentLabel")}
-          {text("keyMomentValue", "keyMomentValue")}
+          {text("keyMomentLabel", "数字カードの見出し", "総ノート数の隣に出るカード。空でも可。例: 本震")}
+          {text("keyMomentValue", "数字カードの値", "例: M7.1 / 16:27")}
 
-          {text("llmContextPhrase", "LLM 文脈フレーズ")}
-          {text("llmContextPhraseCompact", "LLM 文脈フレーズ（短縮）")}
-          {text("llmContextPhraseShort", "LLM 文脈フレーズ（最短）")}
+          <p className="text-[12px] text-muted">
+            AI がノートを判定・分類するときに伝える事例名です。公開ページには出ません。同じ事例を3つの長さで書きます。
+          </p>
+          {text("llmContextPhrase", "AI に伝える事例名（正式）", "関連性の判定に使います。例: 2026年7月28日に発生した熊本地震")}
+          {text("llmContextPhraseCompact", "AI に伝える事例名（短め）", "分類とレポートに使います。例: 2026年7月28日の熊本地震")}
+          {text("llmContextPhraseShort", "AI に伝える事例名（最短）", "例: 熊本地震")}
 
           <div className="flex flex-col gap-2">
-            <p className="text-[12px] font-semibold text-strong">公式情報</p>
-            {text("officialSourcesIntro", "前置き")}
+            <p className="text-[12px] font-semibold text-strong">フッターの公式情報リンク</p>
+            {text("officialSourcesIntro", "前置き", "リンクの前に置く文。例: 地震・被害・避難に関する一次情報は")}
             {errors.officialSources !== undefined && <p className="text-[12px] text-accent">{errors.officialSources}</p>}
             {values.officialSources.map((s, i) => (
               <div key={i} className="flex flex-col gap-1 rounded-md border border-line p-2">
@@ -353,11 +365,12 @@ export function TenantFormSections({ values, onChange, errors, section, slugEdit
               ＋ 行を足す
             </button>
           </div>
-          {text("officialSourcesDisclaimer", "注意書き")}
+          {text("officialSourcesDisclaimer", "注意書き", "例: 本サイトは防災情報を提供するものではありません。")}
 
-          {text("issuesUrl", "issuesUrl")}
-          {text("githubRepo", "githubRepo")}
-          {text("appTitle", "appTitle")}
+          <p className="text-[12px] font-semibold text-strong">詳細（通常は変えない）</p>
+          {text("issuesUrl", "不具合報告先の URL", "フッターの「GitHub Issues」のリンク先")}
+          {text("githubRepo", "GitHub リポジトリ（owner/repo）", "AI 利用料の集計で使う識別子")}
+          {text("appTitle", "アプリ名（半角英数）", "AI 利用料の集計で使う識別子")}
         </Block>
       )}
     </div>

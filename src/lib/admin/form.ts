@@ -157,10 +157,14 @@ export function toTenantInput(
       scheduleLabel: v.scheduleLabel,
       monitorStartAt: jstToMs(v.monitorStartAt),
       monitorEndDate: v.monitorEndDate,
-      searchKeywords: v.searchKeywords
-        .split("\n")
-        .map((k) => k.trim())
-        .filter((k) => k !== ""),
+      searchKeywords: [
+        ...new Set(
+          v.searchKeywords
+            .split("\n")
+            .map((k) => k.trim())
+            .filter((k) => k !== ""),
+        ),
+      ],
       llmContextPhrase: v.llmContextPhrase,
       llmContextPhraseCompact: v.llmContextPhraseCompact,
       llmContextPhraseShort: v.llmContextPhraseShort,

@@ -88,7 +88,7 @@
    - `slug`: 小文字英数とハイフン、1〜42文字。サブドメインと Blob のパスに入る。`settings.slug` と一致させる
    - `type`: `disaster` / `election`。分類プロンプトと関連性判定の既定値が型で決まる
    - `status`: `draft`（作業中・収集しない・公開ページも 404）/ `active` / `ended`
-   - `settings.monitorStartAt`: epoch ms。`monitorEndDate`: `YYYY-MM-DD`（JST）。この日いっぱいが監視中で、翌日 00:00 JST から終了
+   - `settings.monitorStartAt`: epoch ms。`monitorEndDate`: `YYYY-MM-DD`（JST）。この日いっぱいが監視中で、翌日 00:00 JST から終了。開始日（JST）より前の日付は弾く
    - `settings.searchKeywords`: 1語以上。OR・部分一致のゆるい検索語で、無関係なノートは関連性判定で弾く
    - `settings.searchlightTopicId`: Searchlight を使うときだけ。コンソールで topic を作り、その ID を貼る。使わなければ `null`
    - `settings.appTitle`: 印字可能な ASCII だけ（OpenRouter に `X-Title` ヘッダとして送るため。日本語は不可）。`settings.githubRepo`: `owner/repo` の形。`settings.issuesUrl` と `officialSources[].url`: `http(s)://` の URL

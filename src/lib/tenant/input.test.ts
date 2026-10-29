@@ -27,4 +27,37 @@ describe("safeParseTenantInput", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.issues.map((i) => i.path)).toContain("settings.slug");
   });
+
+  it("終了日が開始日（JST）より前なら settings.monitorEndDate に出る", () => {
+    // 開始 2026-07-28 13:00 JST
+    const r = safeParseTenantInput(withSettings(load("disaster"), { monitorEndDate: "2026-07-27" }));
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      const i = r.issues.find((x) => x.path === "settings.monitorEndDate");
+      expect(i?.message).toBe("終了日は開始日以降にしてください");
+    }
+    expect(safeParseTenantInput(withSettings(load("disaster"), { monitorEndDate: "2026-07-28" })).ok).toBe(true);
+  });
+
+  it("違反のメッセージは日本語", () => {
+    const r = safeParseTenantInput(
+      withSettings(load("disaster"), {
+        siteTitle: "",
+        monitorStartAt: Number.NaN,
+        monitorEndDate: "",
+        searchKeywords: [],
+        officialSources: [{ label: "", url: "javascript:alert(1)" }],
+      }),
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      const byPath = Object.fromEntries(r.issues.map((i) => [i.path, i.message]));
+      expect(byPath["settings.siteTitle"]).toBe("入力してください");
+      expect(byPath["settings.monitorStartAt"]).toBe("日時を入力してください");
+      expect(byPath["settings.monitorEndDate"]).toBe("日付を入力してください");
+      expect(byPath["settings.searchKeywords"]).toBe("1つ以上入力してください");
+      expect(byPath["settings.officialSources.0.url"]).toBe("http(s) の URL を入力してください");
+      for (const i of r.issues) expect(i.message).toMatch(/[ぁ-んァ-ヶ一-龠]/);
+    }
+  });
 });
