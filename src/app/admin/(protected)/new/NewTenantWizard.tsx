@@ -135,6 +135,15 @@ export function NewTenantWizard() {
     });
   };
 
+  const startOver = () => {
+    if (!window.confirm("入力した内容を破棄して、最初からやり直します。よろしいですか？")) return;
+    storageClear();
+    setValues(newFormValues("disaster"));
+    setStep(0);
+    setErrors({});
+    setNotice(null);
+  };
+
   if (publishFailed !== null) {
     return (
       <div className="flex flex-col gap-3">
@@ -191,6 +200,14 @@ export function NewTenantWizard() {
             {notice}
           </span>
         )}
+        <button
+          type="button"
+          disabled={pending}
+          onClick={startOver}
+          className="ml-auto text-[12px] text-muted underline hover:text-heading disabled:opacity-50"
+        >
+          入力を破棄して最初から
+        </button>
       </div>
     </div>
   );

@@ -54,11 +54,15 @@ const settingsSchema = z
     path: ["monitorEndDate"],
   });
 
+const THRESHOLD_MSG = "0〜100 の数値を入力してください";
+const BIN_MSG = "1以上の整数を入力してください";
+
 const overridesSchema = z
   .object({
     relevanceMode: z.enum(["score", "binary"]),
-    relevanceThreshold: z.number(),
-    binMinutes: z.number().int().positive(),
+    // Stage1 の点数は 0〜100。範囲外にすると全件が残る／全件が除外され、どこにもエラーが出ない
+    relevanceThreshold: z.number({ error: THRESHOLD_MSG }).min(0, THRESHOLD_MSG).max(100, THRESHOLD_MSG),
+    binMinutes: z.number({ error: BIN_MSG }).int(BIN_MSG).positive(BIN_MSG),
     taxonomy: z
       .object({
         searchTermExamples: z.string(),

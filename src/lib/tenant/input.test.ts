@@ -60,4 +60,20 @@ describe("safeParseTenantInput", () => {
       for (const i of r.issues) expect(i.message).toMatch(/[ぁ-んァ-ヶ一-龠]/);
     }
   });
+
+  it("しきい値は 0〜100、集計単位は1以上の整数", () => {
+    const withOverrides = (o: Record<string, unknown>) => ({ ...load("disaster"), overrides: o });
+    const msg = (o: Record<string, unknown>, path: string) => {
+      const r = safeParseTenantInput(withOverrides(o));
+      return r.ok ? null : (r.issues.find((i) => i.path === path)?.message ?? null);
+    };
+    expect(msg({ relevanceThreshold: 150 }, "overrides.relevanceThreshold")).toBe("0〜100 の数値を入力してください");
+    expect(msg({ relevanceThreshold: -1 }, "overrides.relevanceThreshold")).toBe("0〜100 の数値を入力してください");
+    expect(msg({ relevanceThreshold: Number.NaN }, "overrides.relevanceThreshold")).toBe("0〜100 の数値を入力してください");
+    expect(msg({ binMinutes: 0 }, "overrides.binMinutes")).toBe("1以上の整数を入力してください");
+    expect(msg({ binMinutes: 1.5 }, "overrides.binMinutes")).toBe("1以上の整数を入力してください");
+    expect(msg({ binMinutes: Number.NaN }, "overrides.binMinutes")).toBe("1以上の整数を入力してください");
+    expect(safeParseTenantInput(withOverrides({ relevanceThreshold: 0, binMinutes: 1 })).ok).toBe(true);
+    expect(safeParseTenantInput(withOverrides({ relevanceThreshold: 100 })).ok).toBe(true);
+  });
 });
