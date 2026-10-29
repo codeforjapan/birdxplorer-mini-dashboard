@@ -76,4 +76,14 @@ describe("safeParseTenantInput", () => {
     expect(safeParseTenantInput(withOverrides({ relevanceThreshold: 0, binMinutes: 1 })).ok).toBe(true);
     expect(safeParseTenantInput(withOverrides({ relevanceThreshold: 100 })).ok).toBe(true);
   });
+
+  it("slug が空なら「入力してください」", () => {
+    const r = safeParseTenantInput({ ...withSettings(load("disaster"), { slug: "" }), slug: "" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      const msgs = r.issues.filter((i) => i.path === "slug" || i.path === "settings.slug").map((i) => i.message);
+      expect(msgs[0]).toBe("入力してください");
+      expect(msgs).not.toContain("slug が規則に合いません");
+    }
+  });
 });

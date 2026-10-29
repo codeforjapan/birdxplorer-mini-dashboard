@@ -222,7 +222,7 @@ function Summary({ values, errors }: { values: TenantFormValues; errors: Record<
     ["終了日（JST）", values.monitorEndDate],
     ["検索語", [...new Set(values.searchKeywords.split("\n").map((k) => k.trim()).filter((k) => k !== ""))].join("、")],
     ["関連性の方式", values.relevanceMode === "score" ? "点数" : "関連あり／なしの2択"],
-    ["しきい値", String(values.relevanceThreshold)],
+    ["しきい値", values.relevanceMode === "score" ? String(values.relevanceThreshold) : "使わない（2択のため）"],
     ["グラフの集計単位（分）", String(values.binMinutes)],
     ["グラフに引く縦線", `${values.keyMoments.length} 件`],
     ["公式情報リンク", `${values.officialSources.length} 件`],

@@ -13,6 +13,11 @@ function isRealDate(s: string): boolean {
 
 const nonEmpty = z.string().min(1, "入力してください");
 
+const slugSchema = z
+  .string()
+  .min(1, { error: "入力してください", abort: true })
+  .refine(isValidSlug, "slug が規則に合いません");
+
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
 
 function jstDateOf(ms: number): string {
@@ -21,7 +26,7 @@ function jstDateOf(ms: number): string {
 
 const settingsSchema = z
   .object({
-    slug: z.string().refine(isValidSlug, "slug が規則に合いません"),
+    slug: slugSchema,
     siteTitle: nonEmpty,
     siteDescription: nonEmpty,
     eyebrowLabel: nonEmpty,
@@ -83,7 +88,7 @@ const overridesSchema = z
 
 const inputSchema = z
   .object({
-    slug: z.string().refine(isValidSlug, "slug が規則に合いません"),
+    slug: slugSchema,
     type: z.enum(["disaster", "election"]),
     status: z.enum(["draft", "active", "ended"]),
     settings: settingsSchema,
