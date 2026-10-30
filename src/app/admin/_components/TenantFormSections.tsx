@@ -248,6 +248,7 @@ export function TenantFormSections({ values, onChange, errors, section, slugEdit
                 <div className="flex items-center gap-2">
                   <input
                     type="datetime-local"
+                    aria-label="縦線の日時（JST）"
                     className={INPUT}
                     value={k.at}
                     onChange={(e) =>
@@ -259,6 +260,7 @@ export function TenantFormSections({ values, onChange, errors, section, slugEdit
                   />
                   <input
                     className={INPUT}
+                    aria-label="縦線の文言"
                     placeholder="マーカーの文言"
                     value={k.markerLabel}
                     onChange={(e) =>
@@ -316,6 +318,7 @@ export function TenantFormSections({ values, onChange, errors, section, slugEdit
                 <div className="flex items-center gap-2">
                   <input
                     className={INPUT}
+                    aria-label="リンクの名称"
                     placeholder="名称"
                     value={s.label}
                     onChange={(e) =>
@@ -327,6 +330,7 @@ export function TenantFormSections({ values, onChange, errors, section, slugEdit
                   />
                   <input
                     className={INPUT}
+                    aria-label="リンクの URL"
                     placeholder="https://"
                     value={s.url}
                     onChange={(e) =>
