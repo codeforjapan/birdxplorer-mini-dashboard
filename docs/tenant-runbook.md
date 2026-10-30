@@ -34,7 +34,7 @@
    | `ADMIN_EMAILS` / `ADMIN_ORIGIN` / `AUTH_SECRET` / `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` | 管理画面用。値の用意は §1.5 |
 
    `CRON_SELF_ORIGIN` を本番ドメインにする理由: Deployment Protection が `all_except_custom_domains` のため、デプロイ固有 URL（`*.vercel.app`）への自己呼び出しは SSO で弾かれる。dispatch は事例ごとの作業ルートをこの origin 経由で呼ぶ。
-5. **ドメイン**: `CRON_SELF_ORIGIN` に使うカスタムドメインをプロジェクトに追加しておく（手順は §3）
+5. **ドメイン**: 親ドメインを用意する（§3。初回のみ）。`CRON_SELF_ORIGIN` には事例ではない共通ホストを使う
 6. デプロイする。DB のスキーマは、cron 実行時と `tenant-upsert` 実行時の `migrate()` で作られる（`schema_migrations` に記録され1回だけ流れる）
 7. **最初の事例を §2 で作るまで、dispatch は毎回 500 になる**。`tenants/index.json` は `tenant-upsert` が初めて書くもので、無い状態を「事例0件」とは扱わない（読めないのを空と扱うと、障害時に全事例の cron が黙って止まるため）。draft の事例を1件作れば止まる
 
@@ -60,13 +60,13 @@
 
 ## 2. 新しい事例を立ち上げる
 
-コードの変更・デプロイは不要（ドメイン追加の手作業を除く）。**画面から行うのが基本**で、スクリプト（`tenant-upsert`）は予備と、画面から変えられないものの変更に使う（§2.2）。
+コードの変更・デプロイ・ドメインの作業は不要（URL は親ドメインのワイルドカードで自動で引ける。§3）。**画面から行うのが基本**で、スクリプト（`tenant-upsert`）は予備と、画面から変えられないものの変更に使う（§2.2）。
 
 ### 2.1 画面から立ち上げる
 
 1. `{ADMIN_ORIGIN}/admin` にログインし、`/admin/new`（事例を新規作成）のウィザードを進める。型（`disaster` / `election`）・名称・監視期間・検索キーワード・基準時刻・一次情報リンクなどを入れる。入力の検証はスクリプトと同じ（§2.2 の項目の規則がそのまま効く）
 2. 保存すると**必ず `draft`**（収集しない・公開ページも 404）で作られる。slug は作成後に変えられない
-3. **ドメインを追加する**（§3）
+3. **ドメインの作業は不要**: `https://{slug}.<親ドメイン>/` は §3 のワイルドカードでそのまま引ける
 4. **表示を確認する**: §2.2 手順4 と同じ。`draft` のうちは手元の `?mock=1` で見た目を確かめられる
 5. `/admin/{slug}` の状態スイッチで `active` にする（確認ダイアログが出る）。次の dispatch から収集が始まる
 
@@ -127,20 +127,36 @@
 
    検証 → `migrate()` → `tenants` に upsert → Blob の `tenants/{slug}/config.json` と `tenants/index.json` を更新、の順。同じ slug で流し直せば設定の更新になる。
    Blob の更新で失敗すると「DB には反映済み・Blob は未反映」と出て終了コード 1 になる。同じコマンドをそのまま流し直せばよい（upsert も書き出しも冪等）。
-3. **ドメインを追加する**（§3）
+3. **ドメインの作業は不要**: `https://{slug}.<親ドメイン>/` は §3 のワイルドカードでそのまま引ける
 4. **表示を確認する**: `https://{slug}.<親ドメイン>/` を開く。登録の無いホストと `draft` の事例は 404 になる（作業中の事例を公開しないため）。`draft` のうちは手元の `pnpm dev` で `?mock=1` を付ければ、その事例の設定とモックデータで見た目を確認できる。`status` を `active` にすると、次の dispatch から収集が始まる（ingest は slug 順に5枠へ割り当てられ、最大10分で最初の実行が来る）
 
    > **既知のリスク（ingest の枠ずれ）**: 枠は「監視中の事例を slug 順に並べたときの位置」で決まる。事例が監視を始める・終えると、それより後ろの事例の位置がずれて枠が変わり、その切り替わりの回に**同じ事例の ingest が約2分間隔で2回**走ることがある（1回の ingest が2分を超えると2本が重なる）。書き込みは upsert なので行は重複しないが、BirdXplorer API への重い検索と LLM 分類が一時的に二重に走り得る。事例の開始・終了はなるべく他事例の負荷が低い時間帯に行う
 
 example の `kumamoto-example` / `okinawa-example` は雛形で、既存の熊本・沖縄の移行ではない。`searchlightTopicId` は `null`。
 
-## 3. ドメインの追加（手作業）
+## 3. 親ドメインの準備（初回のみ）
 
-管理画面から Vercel API は叩かない。人が行う。
+事例の URL は `{slug}.<親ドメイン>`。親ドメインにワイルドカード（`*.<親ドメイン>`）を一度設定しておけば、事例を作るたびのドメイン追加・DNS 登録は要らない。管理画面から Vercel API や DNS は触らない。人が行う。
 
-1. Vercel → 新プロジェクト → Settings → Domains → `{slug}.<親ドメイン>` を追加
-2. 親ドメインの DNS に、Vercel が表示する値で **CNAME**（`{slug}` → `cname.vercel-dns.com` など。画面の指示に従う）を登録する。DNS を管理しているのは誰かは親ドメインごとに確認する
-3. 反映後に HTTPS で開けることを確認する
+DNS を Vercel に移さずに済む方式（Vercel の「Use wildcard domains with an external DNS provider」）を使う。Vercel はワイルドカード証明書の発行に DNS での確認が要るため、`_acme-challenge` だけを Vercel に委任する。
+
+試験環境の実例（2026-10-30）: 親ドメイン `cninfo.code4japan.org`。`code4japan.org` は別アカウントの Route53、`cninfo` のゾーンは birdxplorer アカウントの Route53（`Z03682931381VIRHELQTH`）。
+
+1. **親ドメインのゾーンを作る**（例 Route53）: `aws route53 create-hosted-zone --name <親ドメイン> --caller-reference <一意な文字列>`。返ってきた4つのネームサーバーを控える
+2. **上位のゾーンから委任する**: 上位（例 `code4japan.org`）のゾーンに、`<親ドメイン>` の **NS** レコードとして手順1の4つを登録する。上位のゾーンを管理している人に依頼する。`dig NS <親ドメイン> @8.8.8.8` で4つが返れば反映済み
+3. **Vercel にワイルドカードを追加する**: プロジェクト → Settings → Domains → `*.<親ドメイン>`。上位ドメインがすでにチームで所有確認済みなら追加の TXT は要らない。未確認なら Vercel の指示どおり `_vercel.<上位ドメイン>` に TXT を足す
+4. **親ドメインのゾーンにレコードを2つ入れる**:
+
+   | 名前 | 種類 | 値 |
+   |---|---|---|
+   | `*.<親ドメイン>` | CNAME | Vercel の Domains 画面（または `GET /v6/domains/*.<親ドメイン>/config` の `recommendedCNAME` の1位）に出るプロジェクト固有の値（例 `2d6fbc5533e5eb58.vercel-dns-016.com`） |
+   | `_acme-challenge.<親ドメイン>` | NS | `ns1.vercel-dns.com` と `ns2.vercel-dns.com` |
+
+   `_acme-challenge` の NS は証明書の自動更新に使うので消さない
+5. **環境変数** `TENANT_PARENT_DOMAIN=<親ドメイン>` を入れて再デプロイする
+6. **確認する**: Vercel の Domains 画面でエラーが消えていること、既存の事例の `https://{slug}.<親ドメイン>/` が HTTPS で開けること
+
+登録の無いサブドメインは「This page could not be found」を表示する（HTTP 200 の soft 404。既知の残課題）。
 
 ## 4. 事例の終了
 
