@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { isAdminHost } from "@/lib/admin/host";
 import { tenantHostEnv } from "@/lib/env";
 import { parseHostRules, resolveHostLabel } from "@/lib/tenant/host";
 
@@ -8,7 +9,12 @@ import { parseHostRules, resolveHostLabel } from "@/lib/tenant/host";
  * パスは書き換え先の後ろに付けるだけなので、/t/other/... と直接叩いても他の事例には届かない。
  */
 export function proxy(request: NextRequest) {
-  const label = resolveHostLabel(request.headers.get("host"), parseHostRules(tenantHostEnv()));
+  const host = request.headers.get("host");
+  // 管理画面のホストのトップはログインへ（事例ではないので 404 にしない）
+  if (request.nextUrl.pathname === "/" && isAdminHost(host, process.env.ADMIN_ORIGIN)) {
+    return NextResponse.redirect(new URL("/admin", request.url));
+  }
+  const label = resolveHostLabel(host, parseHostRules(tenantHostEnv()));
   if (!label) return new NextResponse("Not Found", { status: 404 });
 
   const url = request.nextUrl.clone();

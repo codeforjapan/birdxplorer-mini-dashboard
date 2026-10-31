@@ -25,6 +25,7 @@ describe("resolveHostLabel", () => {
     expect(resolveHostLabel("dashboards.code4japan.org", rules)).toBeNull();
     expect(resolveHostLabel("a.b.dashboards.code4japan.org", rules)).toBeNull();
     expect(resolveHostLabel("www.dashboards.code4japan.org", rules)).toBeNull();
+    expect(resolveHostLabel("admin.dashboards.code4japan.org", rules)).toBeNull();
     expect(resolveHostLabel("evil.com", rules)).toBeNull();
     expect(resolveHostLabel("x.dashboards.code4japan.org.evil.com", rules)).toBeNull();
     expect(resolveHostLabel("xdashboards.code4japan.org", rules)).toBeNull();

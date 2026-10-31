@@ -11,8 +11,8 @@ export function isValidSlug(slug: string): boolean {
   return SLUG_RE.test(slug);
 }
 
-// サブドメインとしては有効でも事例ではないもの
-const RESERVED_HOST_LABELS = new Set(["www"]);
+// サブドメインとしては有効でも事例ではないもの（admin は管理画面の ADMIN_ORIGIN に使う）
+const RESERVED_HOST_LABELS = new Set(["www", "admin"]);
 
 export function isValidHostLabel(label: string): boolean {
   return SLUG_RE.test(label) && !RESERVED_HOST_LABELS.has(label);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { adminRedirectTarget } from "./host";
+import { adminRedirectTarget, isAdminHost } from "./host";
 
 describe("adminRedirectTarget", () => {
   const origin = "https://a.vercel.app";
@@ -22,5 +22,19 @@ describe("adminRedirectTarget", () => {
 
   it("host が無ければ ADMIN_ORIGIN へ", () => {
     expect(adminRedirectTarget(null, "/admin", origin)).toBe("https://a.vercel.app/admin");
+  });
+});
+
+describe("isAdminHost", () => {
+  it("ADMIN_ORIGIN のホストだけ真（大文字違いも同じ扱い）", () => {
+    expect(isAdminHost("a.vercel.app", "https://a.vercel.app")).toBe(true);
+    expect(isAdminHost("A.Vercel.App", "https://a.vercel.app")).toBe(true);
+    expect(isAdminHost("x.vercel.app", "https://a.vercel.app")).toBe(false);
+    expect(isAdminHost(null, "https://a.vercel.app")).toBe(false);
+  });
+
+  it("ADMIN_ORIGIN が未設定・不正でも例外にせず偽", () => {
+    expect(isAdminHost("a.vercel.app", undefined)).toBe(false);
+    expect(isAdminHost("a.vercel.app", "not a url")).toBe(false);
   });
 });

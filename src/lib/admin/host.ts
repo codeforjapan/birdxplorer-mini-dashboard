@@ -11,3 +11,13 @@ export function adminRedirectTarget(
   if (host !== null && host.trim().toLowerCase() === origin.host.toLowerCase()) return null;
   return `${origin.origin}${path}`;
 }
+
+/** proxy から呼ぶので、ADMIN_ORIGIN が未設定・不正でも例外にしない */
+export function isAdminHost(host: string | null, adminOrigin: string | undefined): boolean {
+  if (host === null || !adminOrigin) return false;
+  try {
+    return host.trim().toLowerCase() === new URL(adminOrigin).host.toLowerCase();
+  } catch {
+    return false;
+  }
+}

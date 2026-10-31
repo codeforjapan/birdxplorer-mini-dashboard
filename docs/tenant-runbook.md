@@ -42,7 +42,7 @@
 
 事例の作成・編集・状態の切り替えを行う画面（`/admin`）は Google ログインで守る。環境変数を入れて再デプロイするまで、管理画面はエラーページになる（公開サイトと cron には影響しない）。
 
-1. **ログイン先を決める**: `ADMIN_ORIGIN` は管理画面にログインできる**唯一の origin**（例 `https://birdxplorer-mini-dashboard.vercel.app`。末尾スラッシュなし）。他のホスト（事例のサブドメインなど）で `/admin` を開くと `${ADMIN_ORIGIN}/admin` へ飛ばされる。サブドメインごとに OAuth のリダイレクト URI を登録しなくて済むようにするため
+1. **ログイン先を決める**: `ADMIN_ORIGIN` は管理画面にログインできる**唯一の origin**（例 `https://admin.cninfo.code4japan.org`。末尾スラッシュなし）。`admin` は事例の URL に使えない予約語なので、親ドメインのワイルドカードのまま DNS を足さずに使える。このホストのトップ（`/`）は `/admin` へ転送する。他のホスト（事例のサブドメインなど）で `/admin` を開くと `${ADMIN_ORIGIN}/admin` へ飛ばされる。サブドメインごとに OAuth のリダイレクト URI を登録しなくて済むようにするため
 2. **Google の OAuth クライアントを作る**: Google Cloud Console → API とサービス → 認証情報 → OAuth クライアント ID → アプリケーションの種類は**ウェブアプリケーション**。**承認済みのリダイレクト URI** に `{ADMIN_ORIGIN}/api/auth/callback/google` を登録する（`ADMIN_ORIGIN` と一字一句そろえる）。OAuth 同意画面が未設定なら先に設定する。発行された「クライアント ID」と「クライアント シークレット」を控える
 3. **環境変数を Vercel に入れる**（Production / Preview 両方）:
 
