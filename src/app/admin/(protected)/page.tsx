@@ -20,10 +20,10 @@ function statusLabel(rec: TenantRecord): string {
   return STATUS_LABEL[rec.status];
 }
 
-function publicUrls(slug: string, rules: ReturnType<typeof parseHostRules>): string[] {
-  const urls = rules.parentDomain ? [`https://${slug}.${rules.parentDomain}`] : [];
+function publicUrls(hostLabel: string, rules: ReturnType<typeof parseHostRules>): string[] {
+  const urls = rules.parentDomain ? [`https://${hostLabel}.${rules.parentDomain}`] : [];
   for (const [host, target] of Object.entries(rules.aliases)) {
-    if (target === slug) urls.push(`https://${host}`);
+    if (target === hostLabel) urls.push(`https://${host}`);
   }
   return urls;
 }
@@ -91,13 +91,13 @@ function TenantRow({
   rules: ReturnType<typeof parseHostRules>;
 }) {
   const s = rec.settings;
-  const urls = publicUrls(rec.slug, rules);
+  const urls = publicUrls(s.hostLabel, rules);
   return (
     <div className="flex flex-col gap-1 text-[13px] text-body">
       <div className="flex items-baseline justify-between gap-3">
         <p>
           <span className="font-bold text-heading">{s.siteTitle}</span>{" "}
-          <span className="tabular text-muted">{rec.slug}</span>
+          <span className="tabular text-muted">{s.hostLabel}</span>
         </p>
         <Link href={`/admin/${rec.slug}`} className="shrink-0 underline hover:text-heading">
           編集

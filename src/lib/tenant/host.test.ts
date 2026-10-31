@@ -1,42 +1,42 @@
 import { describe, expect, it, vi } from "vitest";
-import { parseHostRules, resolveSlugFromHost } from "./host";
+import { parseHostRules, resolveHostLabel } from "./host";
 
 const rules = {
   parentDomain: "dashboards.code4japan.org",
   aliases: { "kumamoto-earthquake-cninfo.vercel.app": "kumamoto" },
 };
 
-describe("resolveSlugFromHost", () => {
-  it("親ドメイン直下1階層を slug とみなす", () => {
-    expect(resolveSlugFromHost("okinawa2026.dashboards.code4japan.org", rules)).toBe("okinawa2026");
+describe("resolveHostLabel", () => {
+  it("親ドメイン直下1階層をホスト名ラベルとみなす", () => {
+    expect(resolveHostLabel("okinawa2026.dashboards.code4japan.org", rules)).toBe("okinawa2026");
   });
 
   it("大文字・ポート付きでも同じ事例に解決する", () => {
-    expect(resolveSlugFromHost("OKINAWA2026.Dashboards.Code4Japan.org", rules)).toBe("okinawa2026");
-    expect(resolveSlugFromHost("okinawa2026.dashboards.code4japan.org:443", rules)).toBe("okinawa2026");
+    expect(resolveHostLabel("OKINAWA2026.Dashboards.Code4Japan.org", rules)).toBe("okinawa2026");
+    expect(resolveHostLabel("okinawa2026.dashboards.code4japan.org:443", rules)).toBe("okinawa2026");
   });
 
   it("別名のホストは対応表で引く", () => {
-    expect(resolveSlugFromHost("kumamoto-earthquake-cninfo.vercel.app", rules)).toBe("kumamoto");
-    expect(resolveSlugFromHost("Kumamoto-Earthquake-Cninfo.vercel.app:3000", rules)).toBe("kumamoto");
+    expect(resolveHostLabel("kumamoto-earthquake-cninfo.vercel.app", rules)).toBe("kumamoto");
+    expect(resolveHostLabel("Kumamoto-Earthquake-Cninfo.vercel.app:3000", rules)).toBe("kumamoto");
   });
 
   it("既定の事例に落とさず null を返す", () => {
-    expect(resolveSlugFromHost("dashboards.code4japan.org", rules)).toBeNull();
-    expect(resolveSlugFromHost("a.b.dashboards.code4japan.org", rules)).toBeNull();
-    expect(resolveSlugFromHost("www.dashboards.code4japan.org", rules)).toBeNull();
-    expect(resolveSlugFromHost("evil.com", rules)).toBeNull();
-    expect(resolveSlugFromHost("x.dashboards.code4japan.org.evil.com", rules)).toBeNull();
-    expect(resolveSlugFromHost("xdashboards.code4japan.org", rules)).toBeNull();
-    expect(resolveSlugFromHost("-bad.dashboards.code4japan.org", rules)).toBeNull();
-    expect(resolveSlugFromHost("", rules)).toBeNull();
-    expect(resolveSlugFromHost(null, rules)).toBeNull();
+    expect(resolveHostLabel("dashboards.code4japan.org", rules)).toBeNull();
+    expect(resolveHostLabel("a.b.dashboards.code4japan.org", rules)).toBeNull();
+    expect(resolveHostLabel("www.dashboards.code4japan.org", rules)).toBeNull();
+    expect(resolveHostLabel("evil.com", rules)).toBeNull();
+    expect(resolveHostLabel("x.dashboards.code4japan.org.evil.com", rules)).toBeNull();
+    expect(resolveHostLabel("xdashboards.code4japan.org", rules)).toBeNull();
+    expect(resolveHostLabel("-bad.dashboards.code4japan.org", rules)).toBeNull();
+    expect(resolveHostLabel("", rules)).toBeNull();
+    expect(resolveHostLabel(null, rules)).toBeNull();
   });
 
   it("親ドメイン未設定なら別名だけで引く", () => {
     const aliasOnly = { parentDomain: null, aliases: { localhost: "demo" } };
-    expect(resolveSlugFromHost("localhost:3000", aliasOnly)).toBe("demo");
-    expect(resolveSlugFromHost("okinawa2026.dashboards.code4japan.org", aliasOnly)).toBeNull();
+    expect(resolveHostLabel("localhost:3000", aliasOnly)).toBe("demo");
+    expect(resolveHostLabel("okinawa2026.dashboards.code4japan.org", aliasOnly)).toBeNull();
   });
 });
 
@@ -47,7 +47,7 @@ describe("parseHostRules", () => {
     expect(parseHostRules({})).toEqual({ parentDomain: null, aliases: {} });
   });
 
-  it("ホストを小文字化し、slug 規則に合わない別名を捨てる", () => {
+  it("ホストを小文字化し、ホスト名ラベルの規則に合わない別名を捨てる", () => {
     expect(
       parseHostRules({
         TENANT_PARENT_DOMAIN: " Dashboards.Code4Japan.org ",

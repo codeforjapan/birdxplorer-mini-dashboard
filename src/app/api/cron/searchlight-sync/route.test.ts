@@ -35,6 +35,7 @@ import { GET } from "./route";
 
 const settings: TenantSettings = {
   slug: "t",
+  hostLabel: "t",
   siteTitle: "テスト",
   siteDescription: "説明",
   eyebrowLabel: "e",

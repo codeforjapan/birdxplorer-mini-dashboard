@@ -87,7 +87,7 @@ export function cronSelfOrigin(): string {
  * ホスト名から事例を引く規則の元。検証・正規化は tenant/host.ts の parseHostRules が行い、
  * 壊れた値でも例外にしない（proxy で全ページが落ちるのを避けるため）。
  * - TENANT_PARENT_DOMAIN: 事例をサブドメインに持つ親ドメイン（例 dashboards.code4japan.org）
- * - TENANT_HOST_ALIASES: JSON {"host":"slug"}。旧 .vercel.app やローカル開発用
+ * - TENANT_HOST_ALIASES: JSON {"host":"hostLabel"}。旧 .vercel.app やローカル開発用
  */
 export function tenantHostEnv(): { TENANT_PARENT_DOMAIN?: string; TENANT_HOST_ALIASES?: string } {
   return {

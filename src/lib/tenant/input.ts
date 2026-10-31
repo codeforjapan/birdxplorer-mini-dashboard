@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { appTitleSchema, githubRepoSchema, httpUrlSchema } from "./fields";
-import { isValidSlug } from "./slug";
+import { isValidHostLabel, isValidSlug } from "./slug";
 import type { TenantRecord } from "./types";
 
 export type TenantInput = Omit<TenantRecord, "updatedAt" | "searchlightStoppedAt">;
@@ -18,6 +18,11 @@ const slugSchema = z
   .min(1, { error: "入力してください", abort: true })
   .refine(isValidSlug, "slug が規則に合いません");
 
+const hostLabelSchema = z
+  .string()
+  .min(1, { error: "入力してください", abort: true })
+  .refine(isValidHostLabel, "英小文字・数字・ハイフン（先頭と末尾は英数字、42文字まで）で、www 以外にしてください");
+
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
 
 function jstDateOf(ms: number): string {
@@ -27,6 +32,7 @@ function jstDateOf(ms: number): string {
 const settingsSchema = z
   .object({
     slug: slugSchema,
+    hostLabel: hostLabelSchema,
     siteTitle: nonEmpty,
     siteDescription: nonEmpty,
     eyebrowLabel: nonEmpty,

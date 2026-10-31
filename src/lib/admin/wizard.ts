@@ -17,7 +17,10 @@ export const WIZARD_STEPS: { id: WizardStep; label: string }[] = [
 
 export const STORAGE_KEY = "admin:new-tenant";
 
-const BASIC_KEYS = new Set(["slug", "type", "siteTitle"]);
+const BASIC_KEYS = new Set(["hostLabel", "type", "siteTitle"]);
+
+// slug は保存時にサーバが採番するので、作成途中の検証では規則に合う仮の値で埋める
+const SLUG_PLACEHOLDER = "new";
 const PERIOD_KEYS = new Set(["monitorStartAt", "monitorEndDate", "searchKeywords"]);
 const TAXONOMY_KEYS = new Set(["relevanceMode", "relevanceThreshold", "binMinutes"]);
 
@@ -33,7 +36,9 @@ export function stepOfField(key: string): WizardStep {
 /** 全欄の検証結果。toTenantInput が壊れた値で投げたら "_form" に載せる */
 export function validateForm(values: TenantFormValues): Record<string, string> {
   try {
-    const r = safeParseTenantInput(toTenantInput(values, { status: "draft", searchlightTopicId: null }));
+    const r = safeParseTenantInput(
+      toTenantInput({ ...values, slug: SLUG_PLACEHOLDER }, { status: "draft", searchlightTopicId: null }),
+    );
     return r.ok ? {} : fieldErrors(r.issues);
   } catch {
     return { _form: "入力の形が正しくありません" };

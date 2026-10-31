@@ -27,8 +27,8 @@
    | `OPENROUTER_API_KEY` / `OPENROUTER_MODEL` | OpenRouter。モデルは `google/gemini-2.5-flash-lite` |
    | `CRON_SECRET` | `openssl rand -hex 32` |
    | `CRON_SELF_ORIGIN` | **本番のカスタムドメイン**（例 `https://<事例ではない共通ホスト>`）。末尾スラッシュなし |
-   | `TENANT_PARENT_DOMAIN` | 事例のサブドメインの親（`{slug}.<これ>`） |
-   | `TENANT_HOST_ALIASES` | ホスト名 → slug の別名（JSON）。旧 `.vercel.app` やローカル用。不要なら未設定 |
+   | `TENANT_PARENT_DOMAIN` | 事例のサブドメインの親（`{URL}.<これ>`。URL は事例ごとのホスト名ラベル） |
+   | `TENANT_HOST_ALIASES` | ホスト名 → ホスト名ラベルの別名（JSON）。旧 `.vercel.app` やローカル用。不要なら未設定 |
    | `BIRDXPLORER_API_BASE` | 既定のままでよい |
    | `SEARCHLIGHT_BASE_URL` / `_CLIENT_ID` / `_CLIENT_SECRET` / `_COMPANY_ID` | 任意。未設定なら Searchlight 連携は無効 |
    | `ADMIN_EMAILS` / `ADMIN_ORIGIN` / `AUTH_SECRET` / `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` | 管理画面用。値の用意は §1.5 |
@@ -65,14 +65,14 @@
 ### 2.1 画面から立ち上げる
 
 1. `{ADMIN_ORIGIN}/admin` にログインし、`/admin/new`（事例を新規作成）のウィザードを進める。型（`disaster` / `election`）・名称・監視期間・検索キーワード・基準時刻・一次情報リンクなどを入れる。入力の検証はスクリプトと同じ（§2.2 の項目の規則がそのまま効く）
-2. 保存すると**必ず `draft`**（収集しない・公開ページも 404）で作られる。slug は作成後に変えられない
-3. **ドメインの作業は不要**: `https://{slug}.<親ドメイン>/` は §3 のワイルドカードでそのまま引ける
+2. 保存すると**必ず `draft`**（収集しない・公開ページも 404）で作られる。識別子（slug）は保存時に英小文字と数字10文字で採番し、作成後は変わらない。URL に使うのは入力した「URL（サブドメイン）」で、こちらは後から変えられる（§2.3）
+3. **ドメインの作業は不要**: `https://{URL}.<親ドメイン>/` は §3 のワイルドカードでそのまま引ける
 4. **表示を確認する**: §2.2 手順4 と同じ。`draft` のうちは手元の `?mock=1` で見た目を確かめられる
 5. `/admin/{slug}` の状態スイッチで `active` にする（確認ダイアログが出る）。次の dispatch から収集が始まる
 
 編集も `/admin/{slug}` の1画面で行う。
 
-- slug と Searchlight の topic は**表示のみ**。変えられない（topic はスクリプトで変える。§2.2・§4）
+- 識別子（slug）と Searchlight の topic は**表示のみ**。変えられない（topic はスクリプトで変える。§2.2・§4）
 - 状態（`draft` / `active` / `ended`）は状態スイッチだけで変える。6通りの切り替えがすべてでき、そのつど確認ダイアログが出る
 - **設定を変えても、すでに分類済みのノートは再分類されない**。分類の基準（`overrides`・キーワードなど）を変えて既存ノートにも効かせたいときは、従来どおり `/api/admin/reclassify`（`CRON_SECRET` 付き）を実行する
 - 同時編集は後勝ちにならない。開いてから他の人が保存していると「ほかの人が更新しました」と出て保存されない。開き直して最新の内容に直してから保存する
@@ -80,12 +80,21 @@
 - 画面が「この事例は読めない」と報告する行（旧仕様で入った行など）は、画面では直せない。スクリプトで直す（§4 末尾）。**読めない行が1つでもあると、他の事例を保存・状態切り替えしても公開側（`index.json`）に反映されない**（一覧の作り直しが失敗するため。再保存では直らない）。一覧の上と保存時のメッセージに該当 slug が出る
 - 状態切り替えは保存済みの設定をそのまま書く。その設定が今の入力の検証を通らないときは切り替えず、編集画面で直して保存するよう案内が出る
 
+### 2.3 URL を変える
+
+編集画面の「URL（サブドメイン）」を変えて保存する。データ（DB・Blob）は識別子の下にあるので何も動かない。
+
+- **古い URL は転送しない**。共有済みのリンクは 404 になる。公開ページは10分ごとに作り直すので、古い URL は最大10分ほど表示され続けてから 404 になる。新しい URL は index.json の反映（最大60秒）後に開ける
+- 空いた URL は別の事例で使える（例: 今年の事例の URL を `okinawa-2026` に変え、来年の事例を `okinawa` で作る）。使用中の URL は保存時に弾かれる。ただし公開ページのキャッシュ（トップ10分・日次レポート1時間）は URL ごとなので、空けた直後に別の事例で使うと、しばらく前の事例のページが出ることがある。使い回すのは少なくとも1時間あけてから
+- `TENANT_HOST_ALIASES` の値もホスト名ラベルなので、別名を使っている事例の URL を変えたら環境変数も直す
+
 ### 2.2 スクリプトで立ち上げる（予備・topic の変更用）
 
 画面が使えないとき、`searchlightTopicId` を変えるとき、画面で読めない行を直すときに使う。画面と同じ検証・同じ保存処理（DB への upsert と Blob への書き出し）を通る。
 
 1. **JSON を書く**: `tenants/examples/disaster.example.json`（災害）または `election.example.json`（選挙）をコピーして編集する。形は `Omit<TenantRecord, "updatedAt" | "searchlightStoppedAt">`
-   - `slug`: 小文字英数とハイフン、1〜42文字。サブドメインと Blob のパスに入る。`settings.slug` と一致させる
+   - `slug`: **新しく作るときはトップと `settings` の両方から消す**（スクリプトが採番する）。書くと既存の事例の更新になり、無い slug は拒否する。DB の `tenant_id` と Blob のパスに入る
+   - `settings.hostLabel`: URL のサブドメイン。小文字英数とハイフン、1〜42文字、`www` 以外。他の事例と重ならないこと
    - `type`: `disaster` / `election`。分類プロンプトと関連性判定の既定値が型で決まる
    - `status`: `draft`（作業中・収集しない・公開ページも 404）/ `active` / `ended`
    - `settings.monitorStartAt`: epoch ms。`monitorEndDate`: `YYYY-MM-DD`（JST）。この日いっぱいが監視中で、翌日 00:00 JST から終了。開始日（JST）より前の日付は弾く
@@ -125,10 +134,10 @@
    pnpm exec tsx --env-file=.env.local scripts/tenant-upsert.ts tenants/examples/disaster.example.json
    ```
 
-   検証 → `migrate()` → `tenants` に upsert → Blob の `tenants/{slug}/config.json` と `tenants/index.json` を更新、の順。同じ slug で流し直せば設定の更新になる。
+   検証 → `migrate()` → `tenants` に upsert → Blob の `tenants/{slug}/config.json` と `tenants/index.json` を更新、の順。作成したときは採番した slug が出るので、以後の更新は JSON にその slug を書いて流し直す。
    Blob の更新で失敗すると「DB には反映済み・Blob は未反映」と出て終了コード 1 になる。同じコマンドをそのまま流し直せばよい（upsert も書き出しも冪等）。
-3. **ドメインの作業は不要**: `https://{slug}.<親ドメイン>/` は §3 のワイルドカードでそのまま引ける
-4. **表示を確認する**: `https://{slug}.<親ドメイン>/` を開く。登録の無いホストと `draft` の事例は 404 になる（作業中の事例を公開しないため）。`draft` のうちは手元の `pnpm dev` で `?mock=1` を付ければ、その事例の設定とモックデータで見た目を確認できる。`status` を `active` にすると、次の dispatch から収集が始まる（ingest は slug 順に5枠へ割り当てられ、最大10分で最初の実行が来る）
+3. **ドメインの作業は不要**: `https://{URL}.<親ドメイン>/` は §3 のワイルドカードでそのまま引ける
+4. **表示を確認する**: `https://{URL}.<親ドメイン>/` を開く。登録の無いホストと `draft` の事例は 404 になる（作業中の事例を公開しないため）。`draft` のうちは手元の `pnpm dev` で `?mock=1` を付ければ、その事例の設定とモックデータで見た目を確認できる。`status` を `active` にすると、次の dispatch から収集が始まる（ingest は slug 順に5枠へ割り当てられ、最大10分で最初の実行が来る）
 
    > **既知のリスク（ingest の枠ずれ）**: 枠は「監視中の事例を slug 順に並べたときの位置」で決まる。事例が監視を始める・終えると、それより後ろの事例の位置がずれて枠が変わり、その切り替わりの回に**同じ事例の ingest が約2分間隔で2回**走ることがある（1回の ingest が2分を超えると2本が重なる）。書き込みは upsert なので行は重複しないが、BirdXplorer API への重い検索と LLM 分類が一時的に二重に走り得る。事例の開始・終了はなるべく他事例の負荷が低い時間帯に行う
 
@@ -136,7 +145,7 @@ example の `kumamoto-example` / `okinawa-example` は雛形で、既存の熊�
 
 ## 3. 親ドメインの準備（初回のみ）
 
-事例の URL は `{slug}.<親ドメイン>`。親ドメインにワイルドカード（`*.<親ドメイン>`）を一度設定しておけば、事例を作るたびのドメイン追加・DNS 登録は要らない。管理画面から Vercel API や DNS は触らない。人が行う。
+事例の URL は `{URL}.<親ドメイン>`（URL は事例ごとのホスト名ラベル）。親ドメインにワイルドカード（`*.<親ドメイン>`）を一度設定しておけば、事例を作るたびのドメイン追加・DNS 登録は要らない。管理画面から Vercel API や DNS は触らない。人が行う。
 
 DNS を Vercel に移さずに済む方式（Vercel の「Use wildcard domains with an external DNS provider」）を使う。Vercel はワイルドカード証明書の発行に DNS での確認が要るため、`_acme-challenge` だけを Vercel に委任する。
 
@@ -154,7 +163,7 @@ DNS を Vercel に移さずに済む方式（Vercel の「Use wildcard domains w
 
    `_acme-challenge` の NS は証明書の自動更新に使うので消さない
 5. **環境変数** `TENANT_PARENT_DOMAIN=<親ドメイン>` を入れて再デプロイする
-6. **確認する**: Vercel の Domains 画面でエラーが消えていること、既存の事例の `https://{slug}.<親ドメイン>/` が HTTPS で開けること
+6. **確認する**: Vercel の Domains 画面でエラーが消えていること、既存の事例の `https://{URL}.<親ドメイン>/` が HTTPS で開けること
 
 登録の無いサブドメインは「This page could not be found」を表示する（HTTP 200 の soft 404。既知の残課題）。
 
@@ -168,6 +177,17 @@ DNS を Vercel に移さずに済む方式（Vercel の「Use wildcard domains w
 - **`searchlightTopicId` は画面から変えられない**。外す・差し替えるのはスクリプトで行う。**停止の記録が無いまま外す・差し替えることはスクリプトが拒否する**（外すと `searchlight-stop` の対象から消え、旧 topic の収集＝課金を誰も止めなくなる）。終了日の翌日以降に `searchlight-stop` が停止を記録するのを待ってから流し直すか、Searchlight のコンソールで旧 topic の収集を止めたうえで `--topic-stopped-in-searchlight` を付けて流す。旧 topic ID が誤記で Searchlight のトピック一覧に無い場合も、`searchlight-stop` は停止を記録できず待っても解消しないので、`--topic-stopped-in-searchlight` を付けて差し替える
 - 既存の行が今の検証を通らず読めない（旧仕様で入った行など。画面もその事例を読めないと報告する）ときも、旧 topic を判定できないのでスクリプトは拒否する。Searchlight のコンソールで旧 topic の収集が止まっていることを確かめたうえで `--topic-stopped-in-searchlight` を付けて流すと、行を上書きして直す
 - 終了後に Neon を止める場合も、公開ページは Blob だけで動く
+
+### 4.1 識別子を採番方式に揃える（採番前に作った事例）
+
+人が slug を付けていた頃の事例（`kumamoto`・`okinawa` など）は、`scripts/tenant-rekey.ts` で採番した識別子に付け替える。URL は変わらない。DB は1回のトランザクションで写して消し、Blob は写すだけで元を残す。
+
+1. 管理画面でその事例を「下書き」にし、7分待つ（走っている cron が書き終わるのを待つ。待たずに流すとスクリプトが拒否する）。下書きの間は公開ページも 404 になる。終了日を過ぎて Searchlight の停止がまだ記録されていない事例は、記録されるまで拒否する
+2. 確認だけ流す: `pnpm exec tsx --env-file=.env.local scripts/tenant-rekey.ts <slug>`（行数が出る。何も書かない）
+3. 付け替える: 同じコマンドに `--execute`。新しい識別子と「行数は一致しています」が出る
+4. 管理画面の一覧に新しい識別子で出るので、状態を元に戻す（`active` など）。公開ページが開くこと、次の cron が成功することを確かめる
+5. 古い Blob を消す: `scripts/tenant-rekey.ts <古い slug> --delete-old-blobs`（DB に古い slug が残っている、または `index.json` がまだ古い slug を指していれば拒否する）
+- 付け替えの間は関係するテーブルを書き込み禁止でロックする（数秒。他の事例の cron も待たされる）。途中で失敗すると DB は何も変わらず、写しかけの Blob が出力された新しい slug の下に残るので、`--delete-old-blobs` ではなく手で消す
 
 ## 5. 障害時の見方
 

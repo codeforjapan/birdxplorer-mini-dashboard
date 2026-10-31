@@ -7,7 +7,7 @@ import { migrate } from "@/lib/db";
 import { safeParseTenantInput, type TenantInput } from "@/lib/tenant/input";
 import { publishTenant } from "@/lib/tenant/publish";
 import { getTenant, listTenantsLenient, saveTenant } from "@/lib/tenant/repo";
-import { isValidSlug } from "@/lib/tenant/slug";
+import { generateTenantId, isValidSlug } from "@/lib/tenant/slug";
 import type { TenantRecord, TenantStatus } from "@/lib/tenant/types";
 
 export type ActionResult =
@@ -19,6 +19,8 @@ export type ActionResult =
       fieldErrors?: Record<string, string>;
       /** publish-failed のときだけ。DB は進んでいるので、再保存はこの値で送る */
       updatedAt?: number;
+      /** publish-failed のときだけ。作成では画面が採番された slug を知らないので、編集ページへの案内に使う */
+      slug?: string;
     };
 
 type Failure = Extract<ActionResult, { ok: false }>;
@@ -103,6 +105,10 @@ async function publishFailure(): Promise<Failure> {
 async function saveAndPublish(input: TenantInput, expectedUpdatedAt: number | null): Promise<ActionResult> {
   const saved = await saveTenant(input, expectedUpdatedAt);
   if (saved.result === "exists") return fail("exists", `slug ${input.slug} の事例はすでにあります`);
+  if (saved.result === "label-taken") {
+    const message = `URL「${input.settings.hostLabel}」は他の事例が使っています`;
+    return fail("invalid", message, { hostLabel: message });
+  }
   if (saved.result === "conflict") {
     return fail("conflict", "開いている間に他の人が保存しました。開き直して最新の内容を確かめてから保存してください");
   }
@@ -114,7 +120,7 @@ async function saveAndPublish(input: TenantInput, expectedUpdatedAt: number | nu
     return { ok: true, slug: record.slug, updatedAt: record.updatedAt };
   } catch (e) {
     console.error(`[admin] 公開に失敗しました: ${input.slug}`, e);
-    return { ...(await publishFailure()), updatedAt: record.updatedAt };
+    return { ...(await publishFailure()), updatedAt: record.updatedAt, slug: record.slug };
   }
 }
 
@@ -131,9 +137,11 @@ async function run(slug: string, body: () => Promise<ActionResult>): Promise<Act
 }
 
 export async function createTenantAction(values: TenantFormValues): Promise<ActionResult> {
-  const slug = String((values as Partial<TenantFormValues> | null)?.slug);
+  // slug は画面から受け取らず、ここで採番する（作成後は変わらない識別子のため）
+  const slug = generateTenantId();
   return run(slug, async () => {
-    const parsed = parseForm(values, { status: "draft", searchlightTopicId: null });
+    if (typeof values !== "object" || values === null) return fail("invalid", "入力の形が正しくありません");
+    const parsed = parseForm({ ...values, slug }, { status: "draft", searchlightTopicId: null });
     if (!parsed.ok) return parsed.failure;
     return saveAndPublish(parsed.input, null);
   });

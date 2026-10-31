@@ -13,8 +13,11 @@ import {
 
 const base = { status: "draft" as const, searchlightTopicId: null };
 
+// example は新規作成用で slug を持たないので、既存の事例として足す
 function asRecord(j: unknown): TenantRecord {
-  return { ...(j as Omit<TenantRecord, "updatedAt" | "searchlightStoppedAt">), searchlightStoppedAt: null, updatedAt: 1 };
+  const rec = j as Omit<TenantRecord, "updatedAt" | "searchlightStoppedAt">;
+  const slug = "example";
+  return { ...rec, slug, settings: { ...rec.settings, slug }, searchlightStoppedAt: null, updatedAt: 1 };
 }
 
 describe("newFormValues / toTenantInput", () => {

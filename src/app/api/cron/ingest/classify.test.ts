@@ -19,6 +19,7 @@ import { classifyBatch, pickOldestFirst } from "./classify";
 
 const S: TenantSettings = {
   slug: "t",
+  hostLabel: "t",
   siteTitle: "テスト",
   siteDescription: "説明",
   eyebrowLabel: "e",

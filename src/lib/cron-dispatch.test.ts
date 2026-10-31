@@ -8,6 +8,7 @@ const START = Date.parse("2026-10-01T00:00:00+09:00");
 function entry(slug: string, over: Partial<TenantIndexEntry> = {}): TenantIndexEntry {
   return {
     slug,
+    hostLabel: slug,
     status: "active",
     monitorStartAt: START,
     monitorEndDate: "2026-12-31",

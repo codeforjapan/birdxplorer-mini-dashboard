@@ -4,7 +4,7 @@ import { errorsForStep, firstStepWithError, parseDraft, stepOfField, validateFor
 
 describe("stepOfField", () => {
   it("欄をステップに振り分ける", () => {
-    expect(stepOfField("slug")).toBe("basic");
+    expect(stepOfField("hostLabel")).toBe("basic");
     expect(stepOfField("monitorEndDate")).toBe("period");
     expect(stepOfField("taxonomy.relevantExamples")).toBe("taxonomy");
     expect(stepOfField("binMinutes")).toBe("taxonomy");
@@ -20,6 +20,12 @@ describe("validateForm / errorsForStep", () => {
     expect(Object.keys(errorsForStep(errors, "basic")).length).toBeGreaterThan(0);
     expect(errorsForStep(errors, "basic").monitorStartAt).toBeUndefined();
     expect(firstStepWithError(errors)).toBe("basic");
+  });
+
+  it("slug は保存時に採番するので、空でもエラーにせず hostLabel を求める", () => {
+    const errors = validateForm(newFormValues("disaster"));
+    expect(errors.slug).toBeUndefined();
+    expect(errors.hostLabel).toBe("入力してください");
   });
 
   it("壊れた値で投げても _form に落とす", () => {

@@ -31,7 +31,8 @@ import { formValuesFromRecord } from "./form";
 const SLUG = "kumamoto-example";
 
 function record(over: Partial<TenantRecord> = {}): TenantRecord {
-  const base = disaster as unknown as Omit<TenantRecord, "updatedAt" | "searchlightStoppedAt">;
+  const example = disaster as unknown as Omit<TenantRecord, "updatedAt" | "searchlightStoppedAt">;
+  const base = { ...example, slug: SLUG, settings: { ...example.settings, slug: SLUG } };
   return { ...base, searchlightStoppedAt: null, updatedAt: 100, ...over };
 }
 
@@ -82,7 +83,8 @@ describe("createTenantAction", () => {
   it("status は draft・topic は null で保存し、書いた行をそのまま公開して成功を返す", async () => {
     savesAs(300);
     const r = await createTenantAction(formValuesFromRecord(record({ status: "active" })));
-    expect(r).toEqual({ ok: true, slug: SLUG, updatedAt: 300 });
+    const slug = savedInput().slug;
+    expect(r).toEqual({ ok: true, slug, updatedAt: 300 });
     expect(getTenant).not.toHaveBeenCalled();
     expect(publishTenant).toHaveBeenCalledWith({ ...savedInput(), searchlightStoppedAt: null, updatedAt: 300 });
     expect(migrate).toHaveBeenCalled();
@@ -91,7 +93,22 @@ describe("createTenantAction", () => {
     expect(savedInput().settings.searchlightTopicId).toBeNull();
     expect(publishTenant).toHaveBeenCalledTimes(1);
     expect(revalidatePath).toHaveBeenCalledWith("/admin");
-    expect(revalidatePath).toHaveBeenCalledWith(`/admin/${SLUG}`);
+    expect(revalidatePath).toHaveBeenCalledWith(`/admin/${slug}`);
+  });
+
+  it("slug は画面の値を使わず採番し、settings.slug と揃える", async () => {
+    await createTenantAction({ ...formValuesFromRecord(record()), slug: "chosen-by-client" });
+    const input = savedInput();
+    expect(input.slug).toMatch(/^[a-z0-9]{10}$/);
+    expect(input.settings.slug).toBe(input.slug);
+    expect(input.settings.hostLabel).toBe("kumamoto-example");
+  });
+
+  it("ホスト名ラベルが他の事例と重なれば hostLabel 欄のエラーで公開しない", async () => {
+    saveTenant.mockResolvedValue({ result: "label-taken" });
+    const r = await createTenantAction(formValuesFromRecord(record()));
+    expect(r).toMatchObject({ ok: false, kind: "invalid", fieldErrors: { hostLabel: expect.stringContaining("kumamoto-example") } });
+    expect(publishTenant).not.toHaveBeenCalled();
   });
 
   it("既存 slug は exists で公開しない", async () => {
@@ -170,6 +187,13 @@ describe("updateTenantAction", () => {
     expect(saveTenant).toHaveBeenCalledWith(expect.anything(), 100);
     expect(savedInput().status).toBe("active");
     expect(savedInput().settings.searchlightTopicId).toBe("t1");
+  });
+
+  it("ホスト名ラベルは変えられる（slug はそのまま）", async () => {
+    const v = { ...formValuesFromRecord(record()), hostLabel: "kumamoto-2026" };
+    await expect(updateTenantAction(SLUG, v, 100)).resolves.toMatchObject({ ok: true, slug: SLUG });
+    expect(savedInput().slug).toBe(SLUG);
+    expect(savedInput().settings.hostLabel).toBe("kumamoto-2026");
   });
 
   it("引数の slug とフォームの slug が違えば invalid", async () => {

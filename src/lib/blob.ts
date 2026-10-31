@@ -1,4 +1,4 @@
-import { list, put } from "@vercel/blob";
+import { copy, del, list, put } from "@vercel/blob";
 import { env } from "./env";
 import { isValidSlug } from "./tenant/slug";
 
@@ -18,6 +18,8 @@ export function tenantPaths(slug: string) {
   if (!isValidSlug(slug)) throw new Error(`不正な slug です: ${JSON.stringify(slug)}`);
   const base = `tenants/${slug}`;
   return {
+    // 末尾の "/" まで含める（slug が前方一致する別の事例 kumamoto と kumamoto-2 を拾わない）
+    prefix: `${base}/`,
     notes: `${base}/data/notes.json`,
     timeline: `${base}/data/timeline.json`,
     clusters: `${base}/data/clusters.json`,
@@ -154,4 +156,44 @@ export async function listDailyReports(slug: string): Promise<string[]> {
     .filter((d): d is string => Boolean(d))
     .sort()
     .reverse();
+}
+
+async function listTenantBlobs(slug: string): Promise<{ pathname: string; url: string }[]> {
+  const { prefix } = tenantPaths(slug);
+  const out: { pathname: string; url: string }[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await list({ prefix, limit: 1000, cursor, token: token() });
+    out.push(...page.blobs.map((b) => ({ pathname: b.pathname, url: b.url })));
+    cursor = page.hasMore ? page.cursor : undefined;
+  } while (cursor !== undefined);
+  return out;
+}
+
+/**
+ * 事例の Blob をすべて別の slug の下に写す（slug の付け替え用）。
+ * copy は cacheControlMaxAge と contentType を引き継がないので、書き込み時と同じ値を付け直す。
+ */
+export async function copyTenantBlobs(from: string, to: string): Promise<string[]> {
+  const src = tenantPaths(from).prefix;
+  const dst = tenantPaths(to).prefix;
+  const blobs = await listTenantBlobs(from);
+  for (const b of blobs) {
+    const isMarkdown = b.pathname.endsWith(".md");
+    await copy(b.url, dst + b.pathname.slice(src.length), {
+      access: "public",
+      contentType: isMarkdown ? "text/markdown; charset=utf-8" : "application/json; charset=utf-8",
+      addRandomSuffix: false,
+      allowOverwrite: true,
+      cacheControlMaxAge: b.pathname.includes("/reports/daily/") ? IMMUTABLE_MAX_AGE : SNAPSHOT_MAX_AGE,
+      token: token(),
+    });
+  }
+  return blobs.map((b) => b.pathname);
+}
+
+export async function deleteTenantBlobs(slug: string): Promise<string[]> {
+  const blobs = await listTenantBlobs(slug);
+  if (blobs.length > 0) await del(blobs.map((b) => b.url), { token: token() });
+  return blobs.map((b) => b.pathname);
 }

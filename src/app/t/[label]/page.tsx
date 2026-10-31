@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { listDailyReports, readJson, readText, tenantPaths } from "@/lib/blob";
 import { generateMock, mockPublicConfig, shouldUseMock } from "@/lib/mock";
-import { readPublicConfig } from "@/lib/tenant/publish";
+import { readPublicTenant } from "@/lib/tenant/publish";
 import { hhmm, isoDate, mmddhhmm, stampJst } from "@/lib/time";
 import type { ClustersFile, CrossPostsFile, NotesFile, TimelineFile } from "@/lib/types";
 import {
@@ -31,12 +31,12 @@ export const revalidate = 600;
 
 // generateStaticParams は置かない。searchParams を読むページを ISR にすると、初回生成が DYNAMIC_SERVER_USAGE で 500 になる
 
-type Params = Promise<{ slug: string }>;
+type Params = Promise<{ label: string }>;
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
-  const { slug } = await params;
-  const config = await readPublicConfig(slug).catch(() => null);
+  const { label } = await params;
+  const config = (await readPublicTenant(label).catch(() => null))?.config;
   if (!config || config.status === "draft") return {};
   return { title: config.siteTitle, description: config.siteDescription };
 }
@@ -44,15 +44,14 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
 export default async function Page({ params, searchParams }: { params: Params; searchParams: SearchParams }) {
   // 現在時刻は一度だけ取得して使い回す。
   const now = nowMs();
-  const [{ slug }, sp] = await Promise.all([params, searchParams]);
+  const [{ label }, sp] = await Promise.all([params, searchParams]);
   const showExcluded = sp.showExcluded === "1";
   const useMock = shouldUseMock(sp.mock);
   const initialTab = sp.tab === "other" ? "other" : "x";
 
   // モック表示は Blob を持たない手元環境でも見られるよう、設定が読めなければ代わりの設定を使う
-  const config = useMock
-    ? ((await readPublicConfig(slug).catch(() => null)) ?? mockPublicConfig(slug))
-    : await readPublicConfig(slug);
+  const tenant = useMock ? await readPublicTenant(label).catch(() => null) : await readPublicTenant(label);
+  const config = tenant?.config ?? (useMock ? mockPublicConfig(label) : null);
   // draft は作業中の事例なので公開しない（手元のモック表示では確認できるようにする）
   if (!config || (config.status === "draft" && !useMock)) notFound();
 
@@ -73,7 +72,8 @@ export default async function Page({ params, searchParams }: { params: Params; s
     cumulativeMarkdown = mock.report;
     const lastMoment = config.keyMoments.at(-1);
     archiveDates = [isoDate(lastMoment?.at ?? config.monitorStartAt)];
-  } else {
+  } else if (tenant) {
+    const { slug } = tenant;
     const paths = tenantPaths(slug);
     try {
       [notesFile, clustersFile, timelineFile, crossPostsFile, cumulativeMarkdown, archiveDates] = await Promise.all([

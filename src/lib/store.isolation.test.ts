@@ -5,6 +5,7 @@ import type { TenantSettings } from "./tenant/types";
 
 const settingsFor = (slug: string): TenantSettings => ({
   slug,
+  hostLabel: slug,
   siteTitle: "テスト",
   siteDescription: "説明",
   eyebrowLabel: "eyebrow",

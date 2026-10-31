@@ -12,7 +12,8 @@ type Props = {
   onChange: (next: TenantFormValues) => void;
   errors: Record<string, string>;
   section: FormSection;
-  slugEditable: boolean;
+  /** 作成中は slug がまだ無い（保存時にサーバが採番する） */
+  isNew: boolean;
 };
 
 const INPUT = "w-full rounded-md border border-line bg-card px-2.5 py-1.5 text-[13px] text-heading";
@@ -52,7 +53,7 @@ function Block({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-export function TenantFormSections({ values, onChange, errors, section, slugEditable }: Props) {
+export function TenantFormSections({ values, onChange, errors, section, isNew }: Props) {
   const show = (s: FormSection) => section === "all" || section === s;
   const set = <K extends keyof TenantFormValues>(key: K, v: TenantFormValues[K]) =>
     onChange({ ...values, [key]: v });
@@ -102,20 +103,25 @@ export function TenantFormSections({ values, onChange, errors, section, slugEdit
         <Block title="基本">
           {text("siteTitle", "サイトタイトル", "公開ページの見出しとブラウザのタブに出ます")}
           <Field
-            label="slug"
-            error={errors.slug}
-            hint={slugEditable ? "URL に使う識別子（英小文字・数字・ハイフン）。作成後は変えられません" : undefined}
+            label="URL（サブドメイン）"
+            error={errors.hostLabel}
+            hint={
+              isNew
+                ? "公開 URL の先頭の部分（英小文字・数字・ハイフン）。後から変えられます"
+                : "変えると古い URL は開けなくなります（新しい URL へは転送しません）"
+            }
           >
-            {slugEditable ? (
-              <input
-                className={`${INPUT} tabular`}
-                value={values.slug}
-                onChange={(e) => set("slug", e.target.value)}
-              />
-            ) : (
-              <span className="tabular text-[13px] font-normal text-heading">{values.slug}</span>
-            )}
+            <input
+              className={`${INPUT} tabular`}
+              value={values.hostLabel}
+              onChange={(e) => set("hostLabel", e.target.value)}
+            />
           </Field>
+          {!isNew && (
+            <Field label="識別子" error={errors.slug} hint="作成時に自動で付けた値で、変えられません。URL には出ません">
+              <span className="tabular text-[13px] font-normal text-heading">{values.slug}</span>
+            </Field>
+          )}
           <Field label="型" error={errors.type}>
             <select
               className={INPUT}

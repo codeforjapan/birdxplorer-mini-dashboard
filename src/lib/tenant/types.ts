@@ -36,7 +36,10 @@ export type TenantTypePreset = {
 };
 
 export type TenantSettings = {
+  /** 作成時に採番する変わらない識別子（DB の tenant_id・Blob のパス）。URL には出さない */
   slug: string;
+  /** 公開 URL のサブドメイン。後から変えられ、事例間で重複しない */
+  hostLabel: string;
   siteTitle: string;
   siteDescription: string;
   eyebrowLabel: string;

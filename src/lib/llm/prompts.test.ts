@@ -8,6 +8,7 @@ import { buildCumulativeSystemPrompt, buildDigestSystemPrompt } from "./report";
 
 const S: TenantSettings = {
   slug: "t",
+  hostLabel: "t",
   siteTitle: "テスト",
   siteDescription: "説明",
   eyebrowLabel: "e",

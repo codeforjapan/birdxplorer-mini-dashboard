@@ -57,6 +57,7 @@ export function newFormValues(type: TenantTypeId): TenantFormValues {
   const p = TENANT_PRESETS[type];
   return {
     slug: "",
+    hostLabel: "",
     type,
     siteTitle: "",
     siteDescription: "",
@@ -96,6 +97,7 @@ export function formValuesFromRecord(rec: TenantRecord): TenantFormValues {
   }
   return {
     slug: rec.slug,
+    hostLabel: s.hostLabel,
     type: rec.type,
     siteTitle: s.siteTitle,
     siteDescription: s.siteDescription,
@@ -151,6 +153,7 @@ export function toTenantInput(
     status: base.status,
     settings: {
       slug: v.slug,
+      hostLabel: v.hostLabel,
       siteTitle: v.siteTitle,
       siteDescription: v.siteDescription,
       eyebrowLabel: v.eyebrowLabel,

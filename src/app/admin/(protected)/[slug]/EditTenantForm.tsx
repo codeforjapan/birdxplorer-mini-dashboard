@@ -53,7 +53,7 @@ export function EditTenantForm({ initial, initialStatus, initialUpdatedAt, searc
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-[20px] font-bold text-heading">{values.siteTitle || values.slug}</h1>
-          <p className="tabular text-[12px] text-muted">{values.slug}</p>
+          <p className="tabular text-[12px] text-muted">{values.hostLabel}</p>
           <p className="mt-1 text-[12px] text-muted">
             Searchlight topic:{" "}
             <span className="tabular text-body">{searchlightTopicId ?? "未設定"}</span>（変更は{" "}
@@ -73,7 +73,7 @@ export function EditTenantForm({ initial, initialStatus, initialUpdatedAt, searc
         />
       </div>
 
-      <TenantFormSections values={values} onChange={setValues} errors={errors} section="all" slugEditable={false} />
+      <TenantFormSections values={values} onChange={setValues} errors={errors} section="all" isNew={false} />
 
       <div className="flex flex-wrap items-center gap-3">
         <button

@@ -115,12 +115,12 @@ export function NewTenantWizard() {
         // DB には下書きとして入っているので、ここから先は編集ページで扱う
         setDone(true);
         storageClear();
-        setPublishFailed({ slug: values.slug, message: r.message });
+        setPublishFailed({ slug: r.slug ?? "", message: r.message });
         return;
       }
       if (r.kind === "exists") {
-        setStep(0);
-        setErrors({ slug: "この slug は使われています" });
+        // 採番した識別子が既存と重なった（まず起きない）。押し直せば別の値を採番する
+        setNotice("識別子の採番が重なりました。もう一度「作成」を押してください");
         return;
       }
       if (r.kind === "invalid") {
@@ -174,7 +174,7 @@ export function NewTenantWizard() {
       {current.id === "confirm" ? (
         <Summary values={values} errors={errors} />
       ) : (
-        <TenantFormSections values={values} onChange={setValues} errors={errors} section={current.id} slugEditable />
+        <TenantFormSections values={values} onChange={setValues} errors={errors} section={current.id} isNew />
       )}
 
       <div className="flex flex-wrap items-center gap-3">
@@ -216,7 +216,7 @@ export function NewTenantWizard() {
 function Summary({ values, errors }: { values: TenantFormValues; errors: Record<string, string> }) {
   const rows: [string, string][] = [
     ["サイトタイトル", values.siteTitle],
-    ["slug", values.slug],
+    ["URL（サブドメイン）", values.hostLabel],
     ["型", TENANT_PRESETS[values.type].label],
     ["開始日時（JST）", values.monitorStartAt],
     ["終了日（JST）", values.monitorEndDate],

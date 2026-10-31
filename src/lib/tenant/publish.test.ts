@@ -10,12 +10,13 @@ vi.mock("@vercel/blob", () => blob);
 const repo = vi.hoisted(() => ({ listTenants: vi.fn<() => Promise<TenantRecord[]>>() }));
 vi.mock("./repo", () => repo);
 
-import { publishTenant, readPublicConfig, readTenantIndex } from "./publish";
+import { findSlugByHostLabel, publishTenant, readPublicConfig, readPublicTenant, readTenantIndex } from "./publish";
 import { resolveTenantConfig, toPublicConfig } from "./resolve";
 
 function settings(slug: string, searchlightTopicId: string | null): TenantSettings {
   return {
     slug,
+    hostLabel: slug,
     siteTitle: `${slug} タイトル`,
     siteDescription: "説明",
     eyebrowLabel: "eyebrow",
@@ -93,7 +94,7 @@ describe("publishTenant", () => {
   });
 
   it("index.json を全事例から作り直す", async () => {
-    const a = record("a", { settings: settings("a", "t-a"), searchlightStoppedAt: 5 });
+    const a = record("a", { settings: { ...settings("a", "t-a"), hostLabel: "okinawa" }, searchlightStoppedAt: 5 });
     const b = record("b", { status: "draft" });
     repo.listTenants.mockResolvedValue([a, b]);
 
@@ -102,6 +103,7 @@ describe("publishTenant", () => {
     expect(written("tenants/index.json")).toEqual([
       {
         slug: "a",
+        hostLabel: "okinawa",
         status: "active",
         monitorStartAt: 1000,
         monitorEndDate: "2026-12-31",
@@ -110,6 +112,7 @@ describe("publishTenant", () => {
       },
       {
         slug: "b",
+        hostLabel: "b",
         status: "draft",
         monitorStartAt: 1000,
         monitorEndDate: "2026-12-31",
@@ -142,6 +145,7 @@ describe("readTenantIndex", () => {
   it("正しい index は読める", async () => {
     const entry = {
       slug: "a",
+      hostLabel: "okinawa",
       status: "active",
       monitorStartAt: 1,
       monitorEndDate: "2026-12-31",
@@ -150,6 +154,63 @@ describe("readTenantIndex", () => {
     };
     serve("tenants/index.json", async () => new Response(JSON.stringify([entry])));
     expect(await readTenantIndex()).toEqual([entry]);
+  });
+});
+
+describe("findSlugByHostLabel / readPublicTenant", () => {
+  const entry = (slug: string, hostLabel?: string) => ({
+    slug,
+    ...(hostLabel === undefined ? {} : { hostLabel }),
+    status: "active",
+    monitorStartAt: 1,
+    monitorEndDate: "2026-12-31",
+    hasSearchlight: false,
+    searchlightStopped: false,
+  });
+
+  it("ラベルから slug を引く", async () => {
+    serve("tenants/index.json", async () => new Response(JSON.stringify([entry("k3x9q2m7ta", "okinawa")])));
+    expect(await findSlugByHostLabel("okinawa")).toBe("k3x9q2m7ta");
+  });
+
+  it("slug では引かない（ラベルが別の事例の slug と同じでも取り違えない）", async () => {
+    serve(
+      "tenants/index.json",
+      async () => new Response(JSON.stringify([entry("okinawa", "okinawa-2026"), entry("k3x9q2m7ta", "okinawa")])),
+    );
+    expect(await findSlugByHostLabel("okinawa")).toBe("k3x9q2m7ta");
+    expect(await findSlugByHostLabel("okinawa-2026")).toBe("okinawa");
+    expect(await findSlugByHostLabel("k3x9q2m7ta")).toBeNull();
+  });
+
+  it("007 より前の index（ラベル無し）は slug をラベルとして扱う", async () => {
+    serve("tenants/index.json", async () => new Response(JSON.stringify([entry("kumamoto")])));
+    expect(await findSlugByHostLabel("kumamoto")).toBe("kumamoto");
+  });
+
+  it("形式違反・index が無いときは null、読み取り失敗は例外", async () => {
+    expect(await findSlugByHostLabel("../x")).toBeNull();
+    expect(await findSlugByHostLabel("www")).toBeNull();
+    expect(await findSlugByHostLabel("okinawa")).toBeNull();
+    serve("tenants/index.json", async () => new Response("", { status: 500 }));
+    await expect(findSlugByHostLabel("okinawa")).rejects.toThrow(/HTTP 500/);
+  });
+
+  it("readPublicTenant はラベルで引いた slug の設定を読む", async () => {
+    const pub = toPublicConfig(resolveTenantConfig(record("k3x9q2m7ta")));
+    const files: Record<string, unknown> = {
+      "tenants/index.json": [entry("k3x9q2m7ta", "okinawa")],
+      "tenants/k3x9q2m7ta/config.json": pub,
+    };
+    blob.list.mockImplementation(async () => ({
+      blobs: Object.keys(files).map((pathname) => ({ pathname, url: `https://blob.example/${pathname}` })),
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => new Response(JSON.stringify(files[url.replace("https://blob.example/", "")]))),
+    );
+    expect(await readPublicTenant("okinawa")).toEqual({ slug: "k3x9q2m7ta", config: pub });
+    expect(await readPublicTenant("kumamoto")).toBeNull();
   });
 });
 

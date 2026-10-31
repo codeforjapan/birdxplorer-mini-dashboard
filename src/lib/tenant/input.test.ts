@@ -2,8 +2,11 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { safeParseTenantInput } from "./input";
 
+// example は新規作成用で slug を持たない（tenant-upsert が採番する）。検証のテストでは既存の事例として slug を足す
 function load(name: string): Record<string, unknown> {
-  return JSON.parse(readFileSync(`tenants/examples/${name}.example.json`, "utf8")) as Record<string, unknown>;
+  const raw = JSON.parse(readFileSync(`tenants/examples/${name}.example.json`, "utf8")) as Record<string, unknown>;
+  const slug = `${name}-example`;
+  return { ...raw, slug, settings: { ...(raw.settings as Record<string, unknown>), slug } };
 }
 
 function withSettings(base: Record<string, unknown>, patch: Record<string, unknown>): Record<string, unknown> {

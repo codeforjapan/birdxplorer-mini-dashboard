@@ -3,6 +3,7 @@ import type { TenantRecord, TenantSettings } from "./types";
 
 const settings: TenantSettings = {
   slug: "repo-test",
+  hostLabel: "repo-test",
   siteTitle: "テスト",
   siteDescription: "説明",
   eyebrowLabel: "eyebrow",
@@ -214,6 +215,93 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("tenant repo（実 DB）", () =>
     } finally {
       await db.sql()`delete from tenants where slug = 'repo-broken'`;
     }
+  });
+
+  it("saveTenant: 他の事例と同じホスト名ラベルは label-taken で何も書かない", async () => {
+    await db.sql()`delete from tenants where slug = 'repo-other'`;
+    const other = { ...rec, slug: "repo-other", settings: { ...settings, slug: "repo-other", hostLabel: "repo-label" } };
+    try {
+      expect((await repo.saveTenant(other, null)).result).toBe("saved");
+      // 新規
+      const mine = { ...rec, settings: { ...settings, hostLabel: "repo-label" } };
+      expect(await repo.saveTenant(mine, null)).toEqual({ result: "label-taken" });
+      expect(await repo.getTenant("repo-test")).toBeNull();
+      // 更新
+      await repo.saveTenant(rec, null);
+      const at = (await repo.getTenant("repo-test"))!.updatedAt;
+      expect(await repo.saveTenant(mine, at)).toEqual({ result: "label-taken" });
+      expect((await repo.getTenant("repo-test"))?.settings.hostLabel).toBe("repo-test");
+      // 空いたラベルは使える
+      const freed = { ...other, settings: { ...other.settings, hostLabel: "repo-other" } };
+      await repo.saveTenant(freed, (await repo.getTenant("repo-other"))!.updatedAt);
+      expect((await repo.saveTenant(mine, at)).result).toBe("saved");
+    } finally {
+      await db.sql()`delete from tenants where slug = 'repo-other'`;
+    }
+  });
+
+  it("rekeyTenant: データを新しい slug に写し、古い行を消し、ラベルは引き継ぐ", async () => {
+    const cleanup = async () => {
+      for (const slug of ["repo-test", "repo-new"]) {
+        await db.sql()`delete from notes where tenant_id = ${slug}`;
+        await db.sql()`delete from job_runs where tenant_id = ${slug}`;
+        await db.sql()`delete from clusters where tenant_id = ${slug}`;
+        await db.sql()`delete from tenants where slug = ${slug}`;
+      }
+    };
+    await cleanup();
+    try {
+      await repo.upsertTenant({ ...rec, settings: { ...settings, hostLabel: "repo-label" } });
+      await repo.markSearchlightStopped("repo-test", 12345);
+      await db.sql()`
+        insert into clusters (tenant_id, id, name, description, color_index, created_at, alias_of) values
+        ('repo-test', 'c_001', 'A', '', 0, 1, null), ('repo-test', 'c_002', 'B', '', 1, 2, 'c_001')`;
+      await db.sql()`
+        insert into notes (tenant_id, note_id, post_id, created_at, summary, post_url, status_refreshed_at,
+          relevance, excluded, cluster_id, classified_at, classifier_version)
+        values ('repo-test', 'n1', 'p1', 1, 's', 'u', 1, 80, false, 'c_002', 1, 'v')`;
+      await db.sql()`
+        insert into job_runs (tenant_id, job, started_at, finished_at, ok, stats)
+        values ('repo-test', 'ingest', 1, 2, true, '{}'::jsonb)`;
+      const before = await repo.countTenantData("repo-test");
+
+      await db.sql()`update tenants set status = 'draft' where slug = 'repo-test'`;
+      await repo.rekeyTenant("repo-test", "repo-new", Date.now() + 10_000_000);
+
+      expect(await repo.getTenant("repo-test")).toBeNull();
+      const moved = await repo.getTenant("repo-new");
+      expect(moved?.settings.slug).toBe("repo-new");
+      expect(moved?.settings.hostLabel).toBe("repo-label");
+      expect(moved?.searchlightStoppedAt).toBe(12345);
+      expect(await repo.countTenantData("repo-new")).toEqual(before);
+      expect(Object.values(await repo.countTenantData("repo-test")).every((n) => n === 0)).toBe(true);
+      const [note] = await db.sql()`select cluster_id from notes where tenant_id = 'repo-new'`;
+      expect(note?.cluster_id).toBe("c_002");
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("rekeyTenant: 途中で失敗したら何も変えない", async () => {
+    await repo.upsertTenant(rec);
+    await db.sql()`delete from tenants where slug = 'repo-taken'`;
+    await repo.upsertTenant({ ...rec, slug: "repo-taken", settings: { ...settings, slug: "repo-taken", hostLabel: "repo-taken" } });
+    try {
+      await db.sql()`update tenants set status = 'draft' where slug = 'repo-test'`;
+      await expect(repo.rekeyTenant("repo-test", "repo-taken", Date.now() + 10_000_000)).rejects.toThrow();
+      expect((await repo.getTenant("repo-test"))?.settings.hostLabel).toBe("repo-test");
+    } finally {
+      await db.sql()`delete from tenants where slug = 'repo-taken'`;
+    }
+  });
+
+  it("rekeyTenant: 下書きでない・quietBefore より後に変わった事例は何も変えない", async () => {
+    await repo.upsertTenant(rec);
+    await expect(repo.rekeyTenant("repo-test", "repo-new", Date.now() + 10_000_000)).rejects.toThrow();
+    await db.sql()`update tenants set status = 'draft' where slug = 'repo-test'`;
+    await expect(repo.rekeyTenant("repo-test", "repo-new", 0)).rejects.toThrow();
+    expect(await repo.getTenant("repo-test")).not.toBeNull();
+    expect(await repo.getTenant("repo-new")).toBeNull();
   });
 
   it("migrate() を2回呼んでも2回目は何も流さない", async () => {
