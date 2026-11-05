@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { readTextStrict, TENANT_INDEX_PATH, tenantPaths, writeJson } from "../blob";
+import { isValidHostLabel } from "./slug";
 import { listTenants } from "./repo";
 import { resolveTenantConfig, toPublicConfig } from "./resolve";
 import type { PublicTenantConfig, TenantRecord, TenantStatus } from "./types";
@@ -11,6 +12,7 @@ import type { PublicTenantConfig, TenantRecord, TenantStatus } from "./types";
 
 export type TenantIndexEntry = {
   slug: string;
+  hostLabel: string;
   status: TenantStatus;
   monitorStartAt: number;
   monitorEndDate: string;
@@ -27,14 +29,18 @@ const INDEX_MAX_AGE = 60;
 const statusSchema = z.enum(["draft", "active", "ended"]);
 
 const indexSchema = z.array(
-  z.object({
-    slug: z.string(),
-    status: statusSchema,
-    monitorStartAt: z.number(),
-    monitorEndDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    hasSearchlight: z.boolean(),
-    searchlightStopped: z.boolean(),
-  }),
+  z
+    .object({
+      slug: z.string(),
+      // 007 より前に書かれた index.json には無い。007 が既存の事例を slug と同じ値で埋めるのと揃える
+      hostLabel: z.string().optional(),
+      status: statusSchema,
+      monitorStartAt: z.number(),
+      monitorEndDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      hasSearchlight: z.boolean(),
+      searchlightStopped: z.boolean(),
+    })
+    .transform(({ hostLabel, ...e }): TenantIndexEntry => ({ ...e, hostLabel: hostLabel ?? e.slug })),
 );
 
 const publicConfigSchema: z.ZodType<PublicTenantConfig> = z.object({
@@ -60,6 +66,7 @@ const publicConfigSchema: z.ZodType<PublicTenantConfig> = z.object({
 function toIndexEntry(rec: TenantRecord): TenantIndexEntry {
   return {
     slug: rec.slug,
+    hostLabel: rec.settings.hostLabel,
     status: rec.status,
     monitorStartAt: rec.settings.monitorStartAt,
     monitorEndDate: rec.settings.monitorEndDate,
@@ -90,6 +97,20 @@ export async function readTenantIndex(): Promise<TenantIndexEntry[]> {
 }
 
 /**
+ * 公開ページ用。ホスト名ラベルから slug を引く。index の CDN キャッシュと同じ60秒で再検証する
+ * （ラベルを変えてから新しい URL が開くまでの遅れをそれ以上に延ばさないため）。
+ * ラベルが無ければ null（404）。slug では探さない（あるラベルが別の事例の slug と同じとき取り違えるため）。
+ * 読み取り失敗・破損は readPublicConfig と同じ理由で例外にする。
+ */
+export async function findSlugByHostLabel(label: string): Promise<string | null> {
+  if (!isValidHostLabel(label)) return null;
+  const text = await readTextStrict(TENANT_INDEX_PATH, { revalidate: INDEX_MAX_AGE });
+  if (text === null) return null;
+  const entry = indexSchema.parse(JSON.parse(text)).find((e) => e.hostLabel === label);
+  return entry?.slug ?? null;
+}
+
+/**
  * 公開ページ用。slug はホスト名由来の外部入力なので、形式違反と「無い」は null（404）にする。
  * 読み取り失敗・中身の破損は例外にする。null だと 404 が ISR にキャッシュされ、一時的な障害で
  * 生成済みのページが消える。例外ならエラー扱いになり、前回生成したページが配信され続ける。
@@ -117,4 +138,14 @@ export async function readPublicConfig(slug: string): Promise<PublicTenantConfig
     throw new Error(`${path} が公開設定の形に合いません`);
   }
   return parsed.data;
+}
+
+/** 公開ページ用。ホスト名ラベルから事例を引いて公開設定を読む。どちらかが無ければ null（404） */
+export async function readPublicTenant(
+  label: string,
+): Promise<{ slug: string; config: PublicTenantConfig } | null> {
+  const slug = await findSlugByHostLabel(label);
+  if (slug === null) return null;
+  const config = await readPublicConfig(slug);
+  return config === null ? null : { slug, config };
 }

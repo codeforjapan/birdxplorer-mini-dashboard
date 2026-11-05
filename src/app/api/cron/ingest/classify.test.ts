@@ -15,10 +15,11 @@ vi.mock("@/lib/llm", () => ({
   assignClusters: mocks.assignClusters,
 }));
 
-import { classifyBatch } from "./classify";
+import { classifyBatch, pickOldestFirst } from "./classify";
 
 const S: TenantSettings = {
   slug: "t",
+  hostLabel: "t",
   siteTitle: "テスト",
   siteDescription: "説明",
   eyebrowLabel: "e",
@@ -132,5 +133,20 @@ describe("classifyBatch", () => {
     const r = await classifyBatch(cfg, [], candidates);
     expect([...r.failedNoteIds].sort()).toEqual(["a", "b"]);
     expect(r.classifications.size).toBe(0);
+  });
+});
+
+describe("pickOldestFirst", () => {
+  const rec = (noteId: string, createdAt: number) => ({ raw: { noteId, createdAt } });
+
+  it("新しい順に並んだ取得結果から、古い方を上限件数だけ古い順で返す", () => {
+    const r = pickOldestFirst([rec("c", 300), rec("b", 200), rec("a", 100)], 2);
+    expect(r.map((x) => x.raw.noteId)).toEqual(["a", "b"]);
+  });
+
+  it("上限以下ならすべて古い順で返し、元の配列は並べ替えない", () => {
+    const input = [rec("b", 200), rec("a", 100)];
+    expect(pickOldestFirst(input, 50).map((x) => x.raw.noteId)).toEqual(["a", "b"]);
+    expect(input.map((x) => x.raw.noteId)).toEqual(["b", "a"]);
   });
 });

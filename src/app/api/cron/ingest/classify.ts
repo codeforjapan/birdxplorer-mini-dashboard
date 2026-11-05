@@ -35,6 +35,18 @@ export type ClassifyResult = {
   newClusters: Cluster[];
 };
 
+/**
+ * 1回の実行で分類するノートを古い順に選ぶ。
+ *
+ * Stage2 は既存クラスタへの寄せを強く優先するため、先に分類したノートがクラスタの粒度を決める。
+ * 事例を後から登録して数千件を遡って分類するとき、新しい順だと発生から日が経った雑多なノートで
+ * 包括的なクラスタが先にでき、発生直後の具体的な噂（熊本の豚汁デマ等）がそこへ吸収された
+ * （2026-10-29 熊本再現試験の実測）。リアルタイム運用と同じ時系列順で分類させる。
+ */
+export function pickOldestFirst<T extends { raw: { createdAt: number } }>(records: readonly T[], limit: number): T[] {
+  return [...records].sort((a, b) => a.raw.createdAt - b.raw.createdAt).slice(0, limit);
+}
+
 /** Stage1 の結果を方式によらない形にそろえたもの。以降の処理は方式を意識しない。 */
 type Stage1Entry = { noteId: string; relevance: number; passed: boolean; reason: string };
 

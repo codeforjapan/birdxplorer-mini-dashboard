@@ -5,6 +5,7 @@ import type { TenantSettings } from "./types";
 
 const S: TenantSettings = {
   slug: "test",
+  hostLabel: "test",
   siteTitle: "テスト",
   siteDescription: "説明",
   eyebrowLabel: "eyebrow",

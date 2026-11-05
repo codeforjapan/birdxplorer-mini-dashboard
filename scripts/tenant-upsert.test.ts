@@ -1,10 +1,13 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { parseTenantInput, topicRemovalRefusal, unreadableExistingRefusal } from "./tenant-upsert";
+import { parseTenantInput, topicRemovalRefusal, unreadableExistingRefusal, withAssignedSlug } from "./tenant-upsert";
 import type { TenantInput } from "./tenant-upsert";
 
+// example は新規作成用で slug を持たない（tenant-upsert が採番する）。検証のテストでは既存の事例として slug を足す
 function load(name: string): Record<string, unknown> {
-  return JSON.parse(readFileSync(`tenants/examples/${name}.example.json`, "utf8")) as Record<string, unknown>;
+  const raw = JSON.parse(readFileSync(`tenants/examples/${name}.example.json`, "utf8")) as Record<string, unknown>;
+  const slug = `${name}-example`;
+  return { ...raw, slug, settings: { ...(raw.settings as Record<string, unknown>), slug } };
 }
 
 function withSettings(base: Record<string, unknown>, patch: Record<string, unknown>): Record<string, unknown> {
@@ -13,7 +16,7 @@ function withSettings(base: Record<string, unknown>, patch: Record<string, unkno
 
 describe("parseTenantInput", () => {
   it("2つの example JSON が通る", () => {
-    expect(parseTenantInput(load("disaster")).slug).toBe("kumamoto-example");
+    expect(parseTenantInput(load("disaster")).slug).toBe("disaster-example");
     expect(parseTenantInput(load("election")).type).toBe("election");
   });
 
@@ -69,6 +72,31 @@ describe("parseTenantInput", () => {
       ).toThrow();
     }
     expect(() => parseTenantInput(withSettings(load("disaster"), { issuesUrl: "http://example.com/i" }))).not.toThrow();
+  });
+});
+
+describe("withAssignedSlug", () => {
+  const withoutSlug = () =>
+    JSON.parse(readFileSync("tenants/examples/disaster.example.json", "utf8")) as Record<string, unknown>;
+
+  it("slug が無ければ採番してトップと settings の両方に入れる", () => {
+    const { raw, isNew } = withAssignedSlug(withoutSlug(), () => "abc123xyz0");
+    expect(isNew).toBe(true);
+    const input = parseTenantInput(raw);
+    expect(input.slug).toBe("abc123xyz0");
+    expect(input.settings.slug).toBe("abc123xyz0");
+  });
+
+  it("slug があれば更新として手を付けない", () => {
+    const base = load("disaster");
+    expect(withAssignedSlug(base, () => "x")).toEqual({ raw: base, isNew: false });
+  });
+
+  it("片方だけ slug があるときは採番せず、検証で食い違いとして弾く", () => {
+    const base = withoutSlug();
+    const { raw, isNew } = withAssignedSlug({ ...base, slug: "a" }, () => "x");
+    expect(isNew).toBe(false);
+    expect(() => parseTenantInput(raw)).toThrow();
   });
 });
 

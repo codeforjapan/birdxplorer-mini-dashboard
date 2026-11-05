@@ -6,12 +6,15 @@ X（旧Twitter）のコミュニティノートを BirdXplorer 経由で継続�
 
 1つのデプロイ（1つの DB・1つの Blob ストア）で複数の事例を動かす。事例（災害・選挙など）は Neon の `tenants` テーブルの設定であり、**新しい事例のためにリポジトリをコピーしたりコードを書き換えたりしない**。
 
-1. **事例の JSON を書く。** `tenants/examples/` の雛形（`disaster.example.json` / `election.example.json`）をコピーし、名称・監視期間・検索キーワード・LLM の主語・基準時刻・一次情報リンクなどを埋める。分類の判断基準は事例の型（`disaster` / `election`、`src/lib/tenant/presets.ts`）が既定値を持ち、必要なら `overrides` で上書きする。
-2. **スクリプトで登録する。** `pnpm exec tsx --env-file=.env.local scripts/tenant-upsert.ts <file.json>`。検証・マイグレーション・DB への upsert・Blob への公開設定の書き出しまで行う。
-3. **ドメインを追加する（手作業）。** Vercel プロジェクトに `{slug}.<親ドメイン>` を追加し、DNS に CNAME を登録する。
-4. **表示を確認する。** ホスト名から事例が引かれる。登録の無いホストは 404。
+通常は**管理画面（`/admin`）から**行う。Google でログインし、新規作成のウィザードで事例を下書きとして保存し、確認してから状態を切り替える。
 
-初回の Vercel プロジェクト・Neon・Blob の用意、環境変数、終了の扱いは [`docs/tenant-runbook.md`](docs/tenant-runbook.md)。Searchlight 連携は任意で、`SEARCHLIGHT_*` を設定せず `searchlightTopicId` を `null` にすれば無効になる。
+1. **管理画面で事例を作る。** `/admin/new` のウィザードで名称・監視期間・検索キーワードなどを入れる。保存すると必ず `draft`（収集しない・公開ページも 404）になる。
+2. **ドメインを追加する（手作業）。** Vercel プロジェクトに `{slug}.<親ドメイン>` を追加し、DNS に CNAME を登録する。
+3. **状態を切り替える。** `/admin/{slug}` の状態スイッチで `active` にすると収集が始まる。ホスト名から事例が引かれ、登録の無いホストは 404。
+
+画面が使えないとき・`searchlightTopicId` を変えるとき・画面が「読めない」と報告した行を直すときは、予備の `scripts/tenant-upsert.ts`（`tenants/examples/` の雛形の JSON を `pnpm exec tsx --env-file=.env.local scripts/tenant-upsert.ts <file.json>` で登録）を使う。画面とスクリプトは同じ検証・同じ保存処理（DB への upsert と Blob への公開設定の書き出し）。
+
+初回の Vercel プロジェクト・Neon・Blob の用意、管理画面の初期設定、環境変数、終了の扱いは [`docs/tenant-runbook.md`](docs/tenant-runbook.md)。Searchlight 連携は任意で、`SEARCHLIGHT_*` を設定せず `searchlightTopicId` を `null` にすれば無効になる。
 
 ## 構成
 
@@ -43,7 +46,8 @@ Frontend (ISR 600s) ← Blob の JSON / Markdown
 | パス | 役割 |
 |---|---|
 | `src/lib/tenant/` | 事例の型・設定の解決・ホスト名からの引き当て・公開設定の書き出し。`presets.ts` が型ごとの分類既定値 |
-| `scripts/tenant-upsert.ts` | 事例の作成・更新スクリプト。雛形は `tenants/examples/` |
+| `src/app/admin/` | 管理画面（Google ログイン・事例の作成と編集）。`src/auth.ts` が認証 |
+| `scripts/tenant-upsert.ts` | 事例の作成・更新スクリプト（画面の予備）。雛形は `tenants/examples/` |
 | `migrations/` | Postgres スキーマ。連番を古い順に適用した結果が正典（適用済みは `schema_migrations` に記録） |
 | `src/lib/types.ts` | TypeScript 側の型定義。Blob に書く JSON の形はここが唯一の定義 |
 | `src/lib/db.ts` | Neon クライアントとマイグレーション |
@@ -76,6 +80,7 @@ pnpm dev
 | `CRON_SECRET` | `openssl rand -hex 32` で生成 |
 | `CRON_SELF_ORIGIN` | 本番のカスタムドメイン（dispatch が作業ルートを呼ぶ先） |
 | `TENANT_PARENT_DOMAIN` / `TENANT_HOST_ALIASES` | 事例のホスト名の引き当て（`.env.example` 参照） |
+| `ADMIN_EMAILS` / `ADMIN_ORIGIN` / `AUTH_SECRET` / `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` | 管理画面（`/admin`）の Google ログイン用。`AUTH_SECRET` は `openssl rand -base64 32`、`AUTH_GOOGLE_*` は Google Cloud Console の OAuth クライアント。手順は [`docs/tenant-runbook.md`](docs/tenant-runbook.md) の「管理画面の初期設定」。`ADMIN_EMAILS` が空なら誰も入れない |
 | `SEARCHLIGHT_*`（任意） | Searchlight連携を使う場合のみ。未設定なら自動的に無効化される |
 
 ### ローカルでの UI 確認

@@ -20,7 +20,8 @@
 - **事例設定**: 監視期間（`monitorStartAt` / `monitorEndDate`）・検索キーワード・LLM の主語（`llmContextPhrase*`）・基準時刻（`keyMoments`）・フッターの一次情報などは、`src/lib/event.ts` ではなく Neon の `tenants` テーブルが持つ。分類プロンプトの判断基準は事例の型（`disaster` / `election`、`src/lib/tenant/presets.ts`）が既定値を持ち、事例ごとの `overrides`（空値は「上書きしない」）で調整する。作成・更新は `scripts/tenant-upsert.ts`（§11）。
 - **DB**: 全テーブルに `tenant_id`（`tenants.slug` への外部キー）を持ち、主キー・一意性・インデックスは `(tenant_id, …)` 起点。他の事例と同じ `note_id` が両方に存在しても、分類・クラスタ・除外は互いに影響しない。`migrations/006_tenants.sql` は新しい（空の）DB 専用。`migrate()` は適用済みを `schema_migrations` に記録して1回しか流さない。
 - **Blob**: 事例ごとに `tenants/{slug}/` 配下へ書く（§5.2）。事例一覧は `tenants/index.json`。
-- **ホスト → 事例**: `{slug}.<TENANT_PARENT_DOMAIN>`（直下1階層のみ・`www` 対象外）と `TENANT_HOST_ALIASES` の別名で引く。登録の無いホストと `draft` の事例は 404（既定の事例には落とさない）。設定の不備は落とさずに無視し、インスタンスごとに1回ログに出す。公開設定 `config.json` が無いときだけ 404 にし、読めない・壊れているときはエラーにする（一時的な障害で 404 を ISR にキャッシュさせないため）。
+- **slug と URL**: slug は作成時に採番する変わらない識別子（英小文字と数字10文字。DB の `tenant_id` と Blob のパス）で、URL には出さない。URL のサブドメインは `settings.hostLabel` で、後から変えられ、事例間で一意（`migrations/007`）。連番にしないのは、手元の DB と試験環境の Blob をつないだときに DB ごとに同じ番号が振られて他の事例の Blob を上書きしないため。古い URL からの転送はしない。
+- **ホスト → 事例**: proxy がホスト名からホスト名ラベル（`{label}.<TENANT_PARENT_DOMAIN>`、直下1階層のみ・`www` と `admin` は対象外。または `TENANT_HOST_ALIASES` の別名）を取り `/t/{label}` に書き換え、公開ページが `tenants/index.json`（60秒で再検証）でラベルから slug を引く。ラベルで見つからなければ slug では探さない（あるラベルが別の事例の slug と同じとき取り違えるため）。登録の無いホストと `draft` の事例は 404（既定の事例には落とさない）。`ADMIN_ORIGIN` のホストのトップ（`/`）は `/admin` へ転送する。設定の不備は落とさずに無視し、インスタンスごとに1回ログに出す。公開設定 `config.json` が無いときだけ 404 にし、読めない・壊れているときはエラーにする（一時的な障害で 404 を ISR にキャッシュさせないため）。
 - **cron の振り分け**: Vercel の cron は静的なので、`vercel.json` は `/api/cron/dispatch/{job}` だけを持つ。振り分け役は **DB に触らず** `tenants/index.json` から対象の事例を選び、`CRON_SELF_ORIGIN`（本番ドメイン）経由で事例ごとの作業ルート（`/api/cron/{job}?tenant={slug}`）を呼ぶ。1事例の失敗・遅延で他の事例が止まらず、全件の結果を返す（1件でも 200 以外があれば 502）。監視中でない事例（`draft`・終了日の翌日 00:00 JST 以降）は対象外で、Neon を起こさない。
 - **ingest の時間差実行**: BirdXplorer API は重い検索を1回に2本受けるため、事例が同時に投げるとタイムアウトしやすい。ingest は **2分ごとの tick × 5枠**で回し、事例を slug 順に枠へ割り当てる（各事例は 10分ごと）。枠は分で決まるので cron が1分遅れても同じ枠に入る。
 - **関連性判定**: 型ごとに `score`（0-100 の閾値）か `binary`（二値）。
@@ -34,7 +35,7 @@
 | 監視スコープ | 令和8年熊本地震（2026年7月28日 16:27・M7.1）に固定した単一イベントモニタ |
 | 運営主体 | 一般社団法人コード・フォー・ジャパン。**ただしサイト上に運営主体の表示は行わない**（v1.1 の判断。ポリシーページを設けないため） |
 | ホスティング | Vercel（**Proプラン契約済み** → cron の分間隔発火が可能） |
-| ドメイン | Vercel のデフォルトドメインを使用（独自ドメインなし） |
+| ドメイン | v1 は Vercel のデフォルトドメイン（独自ドメインなし）。v2 は事例ごとに `{hostLabel}.<TENANT_PARENT_DOMAIN>`（親ドメインのワイルドカード。`docs/tenant-runbook.md` §3） |
 | データストア | **Neon Postgres（唯一の真実）＋ Vercel Blob（公開用スナップショット・書き出し専用）**。§5 参照 |
 | データ取得元 | BirdXplorer REST API（認証不要・§3参照） |
 | 分類方式 | LLMによる動的クラスタ発見（固定タクソノミーなし） |
@@ -273,7 +274,7 @@ out: { merge: [{ from: [ids], into: id }], rename: [{ id, name }] }
 | `app_state` | 小さな状態の汎用置き場。現時点で利用中のキーは無い（旧 `cursor:last_note_created_at` は §3.2 のとおり廃止） |
 | `retry_queue` | LLM出力のパース失敗ノートの再試行キュー（`attempts` で試行回数を保持） |
 | `job_runs` | 各ジョブの最終実行時刻・処理件数・エラー |
-| `tenants` | 事例（v2）。slug・型・状態・設定（jsonb）・上書き（jsonb）・Searchlight 停止時刻 |
+| `tenants` | 事例（v2）。slug・型・状態・設定（jsonb。URL の `hostLabel` を含み、一意索引あり）・上書き（jsonb）・Searchlight 停止時刻 |
 
 上の表のテーブルはいずれも v2 で `tenant_id` を持つ。
 
@@ -295,9 +296,9 @@ Blob store は **public アクセス**で作成する必要がある。アクセ
 | `reports/daily/YYYY-MM-DD.md` | 日次ダイジェスト（**イミュータブル**） | 日次 |
 | `reports/cumulative.md` | 累積レポート（上書き） | 日次 |
 
-**v2 のレイアウト**: 上表のパスはすべて `tenants/{slug}/` 配下に置く（`tenants/{slug}/data/notes.json`、`tenants/{slug}/reports/daily/…` など。`data/cross-posts.json` も同様）。事例ごとの公開設定は `tenants/{slug}/config.json`（秘密・内部値を含めない）、事例一覧は `tenants/index.json`（`publishTenant` が全事例から作り直す）。slug は Blob のパスとサブドメインに埋め込まれるため `src/lib/tenant/slug.ts` の規則で検証する。
+**v2 のレイアウト**: 上表のパスはすべて `tenants/{slug}/` 配下に置く（`tenants/{slug}/data/notes.json`、`tenants/{slug}/reports/daily/…` など。`data/cross-posts.json` も同様）。事例ごとの公開設定は `tenants/{slug}/config.json`（秘密・内部値を含めない）、事例一覧は `tenants/index.json`（`publishTenant` が全事例から作り直す）。slug は Blob のパスに、ホスト名ラベルはサブドメインに埋め込まれるため、どちらも `src/lib/tenant/slug.ts` の規則で検証する。
 
-**サーバ側で Blob を読み戻す例外は2つだけ**: 日次レポート cron（累積レポートへの継ぎ足し。`src/app/api/cron/report/route.ts`）と、dispatch が使う `tenants/index.json`。後者は監視中でない事例のために DB を起こさないための選択で、常に最新が要るので ISR キャッシュを通さず読み、無い・読めない・壊れているときは例外にする（空として扱うと全事例の cron が黙って止まる）。最初の事例を作るまでは無いので dispatch は 500 になる。
+**サーバ側で Blob を読み戻す例外は2つだけ**: 日次レポート cron（累積レポートへの継ぎ足し。`src/app/api/cron/report/route.ts`）と、dispatch が使う `tenants/index.json`。後者は監視中でない事例のために DB を起こさないための選択で、常に最新が要るので ISR キャッシュを通さず読み、無い・読めない・壊れているときは例外にする（空として扱うと全事例の cron が黙って止まる）。最初の事例を作るまでは無いので dispatch は 500 になる。公開ページも `tenants/index.json` をホスト名ラベル → slug の対応表として読むが、これは `config.json` と同じく公開スナップショットの読み手であり（ISR で60秒ごとに再検証）、書き込み側の読み戻しではない。
 
 日次ダイジェストは確定後に書き換えない。累積レポートが継ぎ足しで劣化しても、一次記録はここに残る。永続URL `/report/2026-07-29` として公開する。
 
@@ -435,20 +436,27 @@ CRON_SECRET
 CRON_SELF_ORIGIN              # 振り分け役が作業ルートを呼ぶ先（本番のカスタムドメイン）
 BLOB_READ_WRITE_TOKEN
 DATABASE_URL                  # Neon Postgres（プーラ接続文字列）
-TENANT_PARENT_DOMAIN          # {slug}.<親ドメイン> で事例を引く
-TENANT_HOST_ALIASES           # ホスト名 → slug の別名（JSON）
+TENANT_PARENT_DOMAIN          # {hostLabel}.<親ドメイン> で事例を引く
+TENANT_HOST_ALIASES           # ホスト名 → ホスト名ラベルの別名（JSON）
 SEARCHLIGHT_*                 # 任意
+ADMIN_EMAILS                  # 管理画面（/admin）に入れるメール。カンマ区切り。空なら誰も入れない
+ADMIN_ORIGIN                  # 管理画面でログインできる唯一の origin（他ホストは同じパスへリダイレクト）
+AUTH_SECRET                   # Auth.js のセッション署名鍵（openssl rand -base64 32）
+AUTH_GOOGLE_ID                # Google OAuth クライアント
+AUTH_GOOGLE_SECRET
 ```
+
+管理画面の `ADMIN_*` / `AUTH_*` は Google ログインのためのもので、設定手順は `docs/tenant-runbook.md`。
 
 ---
 
 ## 11. 実装ステップ
 
 1. API 疎通確認とレート制限の実測（`/api/v1/system/ping`、`/search/count`）
-2. 専用のバックフィルスクリプトは作らない。`ingest` は毎回 `MONITOR_START_AT` から全期間を取得する（§3.2）ため、**どの実行もそのままバックフィルを兼ねる**。仮に1回で終わらなくても `searchNotes` の `truncated` フラグで打ち切り、次回実行が残りを拾う。専用スクリプトを別に持つと同じロジックが二重になり、片方だけ腐る
+2. 専用のバックフィルスクリプトは作らない。`ingest` は毎回 `MONITOR_START_AT` から全期間を取得する（§3.2）ため、**どの実行もそのままバックフィルを兼ねる**。仮に1回で終わらなくても `searchNotes` の `truncated` フラグで打ち切り、次回実行が残りを拾う。専用スクリプトを別に持つと同じロジックが二重になり、片方だけ腐る。1回の分類は50件までで、未分類のうち**古い順**に選ぶ。先に分類したノートがクラスタの粒度を決めるため、遡り分を新しい順に処理すると発生直後の具体的な噂が後発の包括的なクラスタに吸収される（2026-10-29 熊本再現試験で実測）。代わりに遡り分類が終わるまで新着の分類は待たされる
 3. `/api/cron/ingest` — 全期間取得・重複排除・スキーマ検証・リトライ機構
 4. `/api/cron/refresh-status`
-5. `/api/cron/recluster`
+5. `/api/cron/recluster` — 直近の ingest が分類を繰り越している間（遡り分類中）は統合しない。遡り中は毎時数百件分の新クラスタが増え、毎時統合すると統合先へさらに統合が連鎖して1本に膨らむ（2026-10-30 熊本再現試験で 124 本が1本に吸収され 57% が集中）。改名の判断材料に渡す代表ノートは直近ではなく期間全体から等間隔に選ぶ（直近だけだと大きなクラスタが最近の少数派の話題で改名される）
 6. `/api/cron/report`（日次＋累積）
 7. フロントエンド実装（`docs/design.md` に準拠）
 8. ~~ポリシーページ（匿名化方針・AI生成の明示・データ出典）~~ — **v1.1 で取りやめ。ページは作らない**（§8-3・§8-8 参照）。AI生成の明示のみ、レポートセクション内の常時表示として残す（§7）

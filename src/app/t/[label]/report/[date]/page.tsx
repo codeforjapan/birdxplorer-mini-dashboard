@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { readJson, readTextStrict, tenantPaths } from "@/lib/blob";
-import { readPublicConfig } from "@/lib/tenant/publish";
+import { readPublicTenant } from "@/lib/tenant/publish";
 import type { ClustersFile, NotesFile } from "@/lib/types";
 import { digestWindow, jstDateStart, mmdd, mmddhhmm } from "@/lib/time";
 import { buildAllDisplayClusters, nowMs, safeIsMonitoringEnded, safeMonitoringEndedLabel } from "@/lib/view";
@@ -15,21 +15,21 @@ export const revalidate = 3600;
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-export function generateStaticParams(): { slug: string; date: string }[] {
+export function generateStaticParams(): { label: string; date: string }[] {
   return [];
 }
 
-type Params = Promise<{ slug: string; date: string }>;
+type Params = Promise<{ label: string; date: string }>;
 
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
-  const { slug } = await params;
-  const config = await readPublicConfig(slug).catch(() => null);
+  const { label } = await params;
+  const config = (await readPublicTenant(label).catch(() => null))?.config;
   if (!config || config.status === "draft") return {};
   return { title: config.siteTitle, description: config.siteDescription };
 }
 
 export default async function DailyReportPage({ params }: { params: Params }) {
-  const { slug, date } = await params;
+  const { label, date } = await params;
 
   // 不正な形式のURLはもちろん、実在する日付かどうかも Date.parse で弾く
   // (例: "2026-02-30" のような形式だけ正しいカレンダー上存在しない日付)。
@@ -39,8 +39,9 @@ export default async function DailyReportPage({ params }: { params: Params }) {
 
   // 設定の読み取り失敗は 404 にせず例外のまま返す（404 が ISR にキャッシュされて生成済みのページが消えるため）。
   // draft は作業中の事例なので公開しない
-  const config = await readPublicConfig(slug);
-  if (!config || config.status === "draft") notFound();
+  const tenant = await readPublicTenant(label);
+  if (!tenant || tenant.config.status === "draft") notFound();
+  const { slug, config } = tenant;
   const paths = tenantPaths(slug);
 
   // 本文も設定と同じく、読み取り失敗は 404 にしない（revalidate の1時間、生成済みのレポートが 404 で固定されるため）

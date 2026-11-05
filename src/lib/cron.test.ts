@@ -11,6 +11,7 @@ import { runTenantCronJob, runTenantShutdownJob, type TenantJobBody } from "./cr
 
 const SETTINGS: TenantSettings = {
   slug: "a",
+  hostLabel: "a",
   siteTitle: "t",
   siteDescription: "d",
   eyebrowLabel: "",

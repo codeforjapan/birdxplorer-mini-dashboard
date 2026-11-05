@@ -1,14 +1,12 @@
-import { isValidSlug } from "./slug";
+import { isValidHostLabel } from "./slug";
 
 /**
- * ホスト名から事例を引く。引けないときは既定の事例に落とさず null を返す
+ * ホスト名から事例のホスト名ラベルを引く。引けないときは既定の事例に落とさず null を返す
  * （登録の無いホストで別の事例が表示されるのを防ぐため）。
+ * ラベルから slug への変換は公開ページが事例一覧で行う（proxy では Blob を読まない）。
  */
 
 export type HostRules = { parentDomain: string | null; aliases: Record<string, string> };
-
-// サブドメインとしては有効でも事例ではないもの
-const RESERVED_LABELS = new Set(["www"]);
 
 function normalizeHost(host: string): string {
   return host.trim().toLowerCase().replace(/:\d+$/, "");
@@ -37,9 +35,9 @@ export function parseHostRules(env: {
     problems.push("TENANT_HOST_ALIASES が JSON として読めない（別名を全て無視）");
   }
   if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
-    for (const [host, slug] of Object.entries(raw)) {
-      if (typeof slug === "string" && isValidSlug(slug)) aliases[normalizeHost(host)] = slug;
-      else problems.push(`TENANT_HOST_ALIASES の ${JSON.stringify(host)} は slug が不正なので無視`);
+    for (const [host, label] of Object.entries(raw)) {
+      if (typeof label === "string" && isValidHostLabel(label)) aliases[normalizeHost(host)] = label;
+      else problems.push(`TENANT_HOST_ALIASES の ${JSON.stringify(host)} はホスト名ラベルが不正なので無視`);
     }
   } else if (raw !== null) {
     problems.push("TENANT_HOST_ALIASES がオブジェクトでない（別名を全て無視）");
@@ -52,7 +50,7 @@ export function parseHostRules(env: {
   return { parentDomain: parent === "" ? null : parent, aliases };
 }
 
-export function resolveSlugFromHost(host: string | null, rules: HostRules): string | null {
+export function resolveHostLabel(host: string | null, rules: HostRules): string | null {
   if (!host) return null;
   const h = normalizeHost(host);
 
@@ -64,6 +62,6 @@ export function resolveSlugFromHost(host: string | null, rules: HostRules): stri
   if (!h.endsWith(suffix)) return null;
   const label = h.slice(0, -suffix.length);
   // 直下1階層だけ（a.b.parent を a.b という事例として扱わない）
-  if (label.includes(".") || RESERVED_LABELS.has(label) || !isValidSlug(label)) return null;
+  if (label.includes(".") || !isValidHostLabel(label)) return null;
   return label;
 }

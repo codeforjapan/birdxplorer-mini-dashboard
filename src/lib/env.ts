@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { parseAllowlist } from "@/lib/admin/allowlist";
 
 /**
  * 環境変数の検証。
@@ -86,7 +87,7 @@ export function cronSelfOrigin(): string {
  * ホスト名から事例を引く規則の元。検証・正規化は tenant/host.ts の parseHostRules が行い、
  * 壊れた値でも例外にしない（proxy で全ページが落ちるのを避けるため）。
  * - TENANT_PARENT_DOMAIN: 事例をサブドメインに持つ親ドメイン（例 dashboards.code4japan.org）
- * - TENANT_HOST_ALIASES: JSON {"host":"slug"}。旧 .vercel.app やローカル開発用
+ * - TENANT_HOST_ALIASES: JSON {"host":"hostLabel"}。旧 .vercel.app やローカル開発用
  */
 export function tenantHostEnv(): { TENANT_PARENT_DOMAIN?: string; TENANT_HOST_ALIASES?: string } {
   return {
@@ -114,3 +115,18 @@ export function hasSearchlightConfig(): boolean {
   return searchlightSchema.safeParse(process.env).success;
 }
 
+
+const adminSchema = z.object({
+  ADMIN_ORIGIN: z.url().transform((v) => v.replace(/\/+$/, "")),
+});
+
+/** 許可リスト。未設定・空なら空集合で全員拒否になる（例外にしない）。 */
+export function adminEmails(): Set<string> {
+  return parseAllowlist(process.env.ADMIN_EMAILS);
+}
+
+/** 管理画面を開けるホスト。ログインはここでだけ行うので、使う箇所でだけ評価する。 */
+export function adminEnv(): { ADMIN_EMAILS: Set<string>; ADMIN_ORIGIN: string } {
+  const { ADMIN_ORIGIN } = parse(adminSchema, "管理画面");
+  return { ADMIN_EMAILS: adminEmails(), ADMIN_ORIGIN };
+}

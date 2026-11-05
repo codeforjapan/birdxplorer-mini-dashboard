@@ -6,7 +6,7 @@ import { z } from "zod";
  */
 
 /** 公開ページのリンクになるので、javascript: などを通さない */
-export const httpUrlSchema = z.url({ protocol: /^https?$/ });
+export const httpUrlSchema = z.url({ protocol: /^https?$/, error: "http(s) の URL を入力してください" });
 
 /** OpenRouter に HTTP-Referer（https://github.com/{これ}）として送る */
 export const githubRepoSchema = z.string().regex(/^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/, "owner/repo の形にしてください");

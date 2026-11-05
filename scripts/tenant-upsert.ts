@@ -5,97 +5,33 @@
  *       [--topic-stopped-in-searchlight]
  *
  * JSON を検証 → マイグレーション → tenants テーブルへ upsert → Blob の公開設定と事例一覧を更新する。
- * 同じ slug を再実行すれば設定の更新になる（searchlight_stopped_at は topic の差し替え・終了日の延長・ended からの再開でだけ消える）。
+ * slug（トップと settings の両方）を書かなければ新規作成で、slug を採番する。
+ * slug を書けば既存の事例の更新で、無い slug は拒否する（slug は採番した値だけにするため）。
+ * 更新では searchlight_stopped_at は topic の差し替え・終了日の延長・ended からの再開でだけ消える。
  * DATABASE_URL と BLOB_READ_WRITE_TOKEN が指す先に実際に書くので、対象環境を確認してから流すこと。
  */
 import { readFileSync } from "node:fs";
-import { z } from "zod";
-import { appTitleSchema, githubRepoSchema, httpUrlSchema } from "../src/lib/tenant/fields";
-import { isValidSlug } from "../src/lib/tenant/slug";
+import { parseTenantInput, type TenantInput } from "../src/lib/tenant/input";
+import { generateTenantId } from "../src/lib/tenant/slug";
 import type { TenantRecord } from "../src/lib/tenant/types";
 
-export type TenantInput = Omit<TenantRecord, "updatedAt" | "searchlightStoppedAt">;
-
-/** "2026-02-30" のような実在しない日付を、形式だけの正規表現が通さないようにする */
-function isRealDate(s: string): boolean {
-  const d = new Date(`${s}T00:00:00Z`);
-  return !Number.isNaN(d.getTime()) && d.toISOString().startsWith(s);
-}
-
-const nonEmpty = z.string().min(1);
-
-const settingsSchema = z
-  .object({
-    slug: z.string().refine(isValidSlug, "slug が規則に合いません"),
-    siteTitle: nonEmpty,
-    siteDescription: nonEmpty,
-    eyebrowLabel: nonEmpty,
-    scheduleLabel: z.string(),
-    monitorStartAt: z.number().int().positive(),
-    monitorEndDate: z
-      .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/)
-      .refine(isRealDate, "実在しない日付です"),
-    searchKeywords: z.array(nonEmpty).min(1),
-    llmContextPhrase: nonEmpty,
-    llmContextPhraseCompact: nonEmpty,
-    llmContextPhraseShort: nonEmpty,
-    keyMoments: z.array(z.object({ at: z.number(), markerLabel: z.string() }).strict()),
-    keyMomentLabel: z.string(),
-    keyMomentValue: z.string(),
-    githubRepo: githubRepoSchema,
-    appTitle: appTitleSchema,
-    issuesUrl: httpUrlSchema,
-    officialSourcesIntro: z.string(),
-    officialSources: z.array(z.object({ label: nonEmpty, url: httpUrlSchema }).strict()),
-    officialSourcesDisclaimer: z.string(),
-    searchlightTopicId: z.string().min(1).nullable(),
-  })
-  .strict();
-
-const overridesSchema = z
-  .object({
-    relevanceMode: z.enum(["score", "binary"]),
-    relevanceThreshold: z.number(),
-    binMinutes: z.number().int().positive(),
-    taxonomy: z
-      .object({
-        searchTermExamples: z.string(),
-        relevantExamples: z.string(),
-        irrelevantExamples: z.string(),
-        clusterNamingGoodExamples: z.string(),
-        clusterNamingBadExamples: z.string(),
-        clusterNamingGoodExampleSingle: z.string(),
-        clusterNamingBadExampleSingle: z.string(),
-        overMergeCounterExample: z.string(),
-        namingNeutralityRule: z.string().nullable(),
-      })
-      .partial()
-      .strict(),
-  })
-  .partial()
-  .strict();
-
-const inputSchema = z
-  .object({
-    slug: z.string().refine(isValidSlug, "slug が規則に合いません"),
-    type: z.enum(["disaster", "election"]),
-    status: z.enum(["draft", "active", "ended"]),
-    settings: settingsSchema,
-    overrides: overridesSchema,
-  })
-  .strict()
-  .refine((v) => v.slug === v.settings.slug, {
-    message: "slug と settings.slug が一致しません",
-    path: ["settings", "slug"],
-  });
-
-/** 純関数。外部入力（JSON）を検証して型付きの値にする。違反は ZodError。 */
-export function parseTenantInput(raw: unknown): TenantInput {
-  return inputSchema.parse(raw);
-}
+export { parseTenantInput, type TenantInput };
 
 export const TOPIC_STOPPED_FLAG = "--topic-stopped-in-searchlight";
+
+/**
+ * 純関数。slug がトップにも settings にも無ければ新規作成として採番した slug を入れ、isNew を返す。
+ * 片方だけあるときはそのまま返し、食い違いは parseTenantInput に弾かせる。
+ */
+export function withAssignedSlug(raw: unknown, generate: () => string = generateTenantId): { raw: unknown; isNew: boolean } {
+  if (typeof raw !== "object" || raw === null) return { raw, isNew: false };
+  const r = raw as Record<string, unknown>;
+  const settings = r.settings;
+  if (typeof settings !== "object" || settings === null) return { raw, isNew: false };
+  if ("slug" in r || "slug" in settings) return { raw, isNew: false };
+  const slug = generate();
+  return { raw: { ...r, slug, settings: { ...settings, slug } }, isNew: true };
+}
 
 /**
  * 純関数。収集中かもしれない topic を設定から外そうとしていれば、拒否の理由を返す。
@@ -144,11 +80,12 @@ async function main(): Promise<void> {
     );
     process.exit(1);
   }
-  const input = parseTenantInput(JSON.parse(readFileSync(file, "utf8")));
+  const assigned = withAssignedSlug(JSON.parse(readFileSync(file, "utf8")));
+  const input = parseTenantInput(assigned.raw);
 
   // DB・Blob を使うモジュールは、検証が通ってから読み込む（テストや検証だけの実行で接続を要求しない）
   const { migrate } = await import("../src/lib/db");
-  const { getTenant, upsertTenant } = await import("../src/lib/tenant/repo");
+  const { getTenant, isHostLabelTaken, upsertTenant } = await import("../src/lib/tenant/repo");
   const { publishTenant } = await import("../src/lib/tenant/publish");
 
   await migrate();
@@ -156,7 +93,10 @@ async function main(): Promise<void> {
   let refusal: string | null;
   try {
     const existing = await getTenant(input.slug);
-    refusal = topicRemovalRefusal(existing, input, stoppedInSearchlight);
+    refusal =
+      existing === null && !assigned.isNew
+        ? `事例 ${input.slug} はありません。新しく作るときは JSON から slug（トップと settings の両方）を消してください（slug は採番します）`
+        : topicRemovalRefusal(existing, input, stoppedInSearchlight);
   } catch (e) {
     refusal = unreadableExistingRefusal(e, stoppedInSearchlight);
   }
@@ -164,7 +104,13 @@ async function main(): Promise<void> {
     console.error(refusal);
     process.exit(1);
   }
-  await upsertTenant(input);
+  try {
+    await upsertTenant(input);
+  } catch (e) {
+    if (!isHostLabelTaken(e)) throw e;
+    console.error(`URL（hostLabel）「${input.settings.hostLabel}」は他の事例が使っています`);
+    process.exit(1);
+  }
   const saved = await getTenant(input.slug);
   if (saved === null) throw new Error(`upsert 後に事例が読めません: ${input.slug}`);
   try {
@@ -174,7 +120,9 @@ async function main(): Promise<void> {
     console.error(e);
     process.exit(1);
   }
-  console.log(`事例 ${saved.slug}（${saved.type} / ${saved.status}）を反映しました`);
+  console.log(
+    `事例 ${saved.slug}（URL ${saved.settings.hostLabel} / ${saved.type} / ${saved.status}）を${assigned.isNew ? "作成" : "更新"}しました`,
+  );
 }
 
 // テストから import されたときは実行しない

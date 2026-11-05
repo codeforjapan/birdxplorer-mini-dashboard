@@ -2,9 +2,11 @@ import { activeClusters, resolveClusterId } from "@/lib/clusters";
 import { runTenantCronJob } from "@/lib/cron";
 import { planRecluster } from "@/lib/llm";
 import type { ReclusterPlan, ReportCluster } from "@/lib/llm";
+import { getRun } from "@/lib/state";
 import { publishSnapshot, readClusters, readNotes, upsertClusters } from "@/lib/store";
 import type { Cluster, Note } from "@/lib/types";
 import { ensureMigrated } from "../_lib/migrate-once";
+import { isBackfilling, pickSpreadSamples } from "./plan";
 
 // migrate() が node:fs に依存するため（ingest/route.ts のコメント参照）。
 export const runtime = "nodejs";
@@ -17,7 +19,7 @@ export const runtime = "nodejs";
 export const maxDuration = 90;
 
 // 1クラスタあたり LLM に渡す代表ノートの件数。多すぎるとプロンプトが肥大化するため、
-// 直近のノートを少数だけ渡す（「今このクラスタが何を指しているか」の判断材料として十分）。
+// 期間全体から少数だけ渡す（pickSpreadSamples 参照）。
 const SAMPLE_SIZE = 5;
 
 /** 除外されていないノートを resolveClusterId 済みのクラスタIDでグルーピングし、代表ノートを添える。 */
@@ -37,10 +39,7 @@ function buildReportClusters(clusters: readonly Cluster[], notes: readonly Note[
 
   return active.map((c) => {
     const notesForCluster = grouped.get(c.id) ?? [];
-    const samples = [...notesForCluster]
-      .sort((a, b) => b.createdAt - a.createdAt)
-      .slice(0, SAMPLE_SIZE)
-      .map((n) => n.summary);
+    const samples = pickSpreadSamples(notesForCluster, SAMPLE_SIZE).map((n) => n.summary);
     return {
       clusterId: c.id,
       name: c.name,
@@ -89,6 +88,11 @@ export async function GET(req: Request): Promise<Response> {
   return runTenantCronJob("recluster", req, async (cfg) => {
     await ensureMigrated();
 
+    // 遡り分類が終わるまでは統合しない（isBackfilling 参照）。状態には触れず次の時間に持ち越す。
+    if (isBackfilling(await getRun(cfg.slug, "ingest"))) {
+      return { activeClusters: 0, merged: 0, renamed: 0, skipped: 1, backfilling: 1 };
+    }
+
     const [clusters, notes] = await Promise.all([readClusters(cfg.slug), readNotes(cfg.slug)]);
     const reportClusters = buildReportClusters(clusters, notes);
 
@@ -96,7 +100,7 @@ export async function GET(req: Request): Promise<Response> {
 
     // null は「今回はスキップ」。状態には一切触れず、次の時間に持ち越す（決定どおり）。
     if (plan === null) {
-      return { activeClusters: reportClusters.length, merged: 0, renamed: 0, skipped: 1 };
+      return { activeClusters: reportClusters.length, merged: 0, renamed: 0, skipped: 1, backfilling: 0 };
     }
 
     const changed = applyPlan(clusters, plan);
@@ -109,6 +113,7 @@ export async function GET(req: Request): Promise<Response> {
       merged,
       renamed: plan.rename.length,
       skipped: 0,
+      backfilling: 0,
     };
   });
 }

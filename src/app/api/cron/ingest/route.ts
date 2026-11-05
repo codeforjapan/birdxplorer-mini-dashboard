@@ -4,7 +4,7 @@ import { drainRetryQueue, enqueueRetry, filterUnseen } from "@/lib/state";
 import { UNCLASSIFIED_AT, publishSnapshot, readClusters, readNotes, upsertClusters, upsertNotes } from "@/lib/store";
 import type { Note } from "@/lib/types";
 import { ensureMigrated } from "../_lib/migrate-once";
-import { classifyBatch, type Candidate } from "./classify";
+import { classifyBatch, pickOldestFirst, type Candidate } from "./classify";
 
 /**
  * migrate() は node:fs（migrations/*.sql の読み取り）に依存するため Edge Runtime では動かない。
@@ -88,7 +88,8 @@ export async function GET(req: Request): Promise<Response> {
 
     // 1回の実行で分類する新規ノートを上限までに絞る。残りは次回以降に繰り越す
     // （末尾一括 upsert のため、1実行で完走できないと進捗が残らない。MAX_CLASSIFY_PER_RUN 参照）。
-    const toClassify = unseen.slice(0, MAX_CLASSIFY_PER_RUN);
+    // 取得は新しい順だが、分類は古い順に選ぶ（pickOldestFirst 参照）。
+    const toClassify = pickOldestFirst(unseen, MAX_CLASSIFY_PER_RUN);
     stats.deferred = unseen.length - toClassify.length;
 
     const clusters = await readClusters(cfg.slug);
