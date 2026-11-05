@@ -26,11 +26,16 @@ npx tsc --noEmit            # ❌
 
 | 対象 | 正典 |
 |---|---|
-| Postgres スキーマ | `migrations/001_init.sql` |
+| Postgres スキーマ | `migrations/` の連番を古い順に適用した結果（`001_init.sql` は基本形。`006_tenants.sql` が主キーを `(tenant_id, …)` に付け替える）。`migrate()` は適用済みを `schema_migrations` に記録して1回だけ流す |
 | TypeScript の型 | `src/lib/types.ts` |
 | LLM 層との境界 | `src/lib/llm/contract.ts` |
+| 事例（テナント）設定 | `src/lib/tenant/types.ts`。DB の `tenants` テーブルが持ち、型ごとの既定値は `presets.ts` |
 
-Neon Postgres が唯一の真実。Vercel Blob はそこから書き出す公開スナップショットであり、**サーバ側から読み戻さない**（上書きの CDN 伝播に最大60秒かかる。`docs/spec.md` §5.3）。
+Neon Postgres が唯一の真実。Vercel Blob はそこから書き出す公開スナップショットであり、**サーバ側から読み戻さない**（上書きの CDN 伝播に最大60秒かかる。`docs/spec.md` §5.3）。例外は2つだけ: 日次レポート cron と、dispatch が使う事例一覧 `tenants/index.json`（監視中でない事例のために DB を起こさないため）。
+
+## マルチテナント
+
+1つのデプロイで複数の事例を動かす。Blob は `tenants/{slug}/…`、DB は全テーブルが `tenant_id` を持つ。ホスト名から事例を引き、未登録のホストと `draft` の事例は 404（既定の事例に落とさない）。cron は `/api/cron/dispatch/{job}` が事例ごとに作業ルートを呼ぶ。事例の作成は `scripts/tenant-upsert.ts`、手順は [`docs/tenant-runbook.md`](docs/tenant-runbook.md)。**`main` にマージする前に Vercel の `kumamoto-earthquake-dashboard` の Git 連携を外すこと**（runbook §0）。
 
 ## 絶対に永続化しないもの
 

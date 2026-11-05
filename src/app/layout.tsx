@@ -1,11 +1,6 @@
-import type { Metadata } from "next";
-import { EVENT } from "@/lib/event";
 import "./globals.css";
 
-export const metadata: Metadata = {
-  title: EVENT.siteTitle,
-  description: EVENT.siteDescription,
-};
+// タイトル・説明は事例ごとに違うので、各ページの generateMetadata が持つ
 
 export default function RootLayout({
   children,

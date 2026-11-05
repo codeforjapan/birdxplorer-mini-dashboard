@@ -1,8 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { EVENT } from "@/lib/event";
-import { mmddhhmm } from "@/lib/time";
+import type { KeyMoment } from "@/lib/tenant/types";
+import { binRangeLabel, binWidthLabel, mmddhhmm } from "@/lib/time";
 import type { CrossPost, CrossPlatform } from "@/lib/types";
 import {
   buildCrossPlatformSummary,
@@ -183,11 +183,15 @@ function PfBlock({
   filter,
   onPickPlatform,
   onPickBin,
+  binMinutes,
+  keyMoments,
 }: {
   s: PfSummary;
   filter: CrossFilter | null;
   onPickPlatform: () => void;
   onPickBin: (startAt: number) => void;
+  binMinutes: number;
+  keyMoments: readonly KeyMoment[];
 }) {
   const activePlatform = filter?.platform === s.platform;
   const selectedBinStartAt = activePlatform ? filter?.binStartAt ?? null : null;
@@ -255,10 +259,13 @@ function PfBlock({
 
       {/* 投稿量チャート（クリックで時間帯絞り込み） */}
       <div className="mt-3">
-        <div className="mb-1 text-[10px] text-label">投稿量の推移（30分・クリックで絞り込み）</div>
+        <div className="mb-1 text-[10px] text-label">
+          投稿量の推移（{binWidthLabel(binMinutes)}・クリックで絞り込み）
+        </div>
         <PfVolumeChart
           bins={s.chartBins}
-          mainshockAt={EVENT.occurredAt}
+          binMinutes={binMinutes}
+          keyMoments={keyMoments}
           selectedBinStartAt={selectedBinStartAt}
           onSelectBin={onPickBin}
         />
@@ -267,13 +274,24 @@ function PfBlock({
   );
 }
 
-export function CrossPlatformTab({ posts, axis }: { posts: CrossPost[]; axis?: CrossChartAxis | null }) {
+export function CrossPlatformTab({
+  posts,
+  axis,
+  binMinutes,
+  keyMoments,
+}: {
+  posts: CrossPost[];
+  axis?: CrossChartAxis | null;
+  /** axis を渡すときはその刻み幅と同じ値にする（絞り込みの範囲がバーと一致するように） */
+  binMinutes: number;
+  keyMoments: readonly KeyMoment[];
+}) {
   const [filter, setFilter] = useState<CrossFilter | null>(null);
   const [visible, setVisible] = useState(LIST_STEP);
 
   // axis を渡すと Xタイムラインと同じ時間軸で chartBins を作る（横位置を揃えるため）。
-  const summaries = useMemo(() => buildCrossPlatformSummary(posts, axis ?? null), [posts, axis]);
-  const shown = useMemo(() => filterCrossPosts(posts, filter), [posts, filter]);
+  const summaries = useMemo(() => buildCrossPlatformSummary(posts, binMinutes, axis ?? null), [posts, binMinutes, axis]);
+  const shown = useMemo(() => filterCrossPosts(posts, filter, binMinutes), [posts, filter, binMinutes]);
 
   if (posts.length === 0) {
     return (
@@ -301,7 +319,7 @@ export function CrossPlatformTab({ posts, axis }: { posts: CrossPost[]; axis?: C
   const filterLabel = filter
     ? filter.binStartAt === null
       ? `${PLATFORM_LABEL[filter.platform]} に絞り込み中`
-      : `${PLATFORM_LABEL[filter.platform]}・${mmddhhmm(filter.binStartAt)}〜 に絞り込み中`
+      : `${PLATFORM_LABEL[filter.platform]}・${binRangeLabel(filter.binStartAt, filter.binStartAt + binMinutes * 60 * 1000)} に絞り込み中`
     : "すべてのプラットフォーム";
 
   return (
@@ -325,6 +343,8 @@ export function CrossPlatformTab({ posts, axis }: { posts: CrossPost[]; axis?: C
             filter={filter}
             onPickPlatform={() => pickPlatform(s.platform)}
             onPickBin={(startAt) => pickBin(s.platform, startAt)}
+            binMinutes={binMinutes}
+            keyMoments={keyMoments}
           />
         ))}
       </div>

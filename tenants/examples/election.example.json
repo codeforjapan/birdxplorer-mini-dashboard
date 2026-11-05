@@ -1,0 +1,70 @@
+{
+  "slug": "okinawa-example",
+  "type": "election",
+  "status": "active",
+  "settings": {
+    "slug": "okinawa-example",
+    "siteTitle": "コミュニティノートタイムライン 2026年沖縄県知事選",
+    "siteDescription": "2026年沖縄県知事選挙（8月27日告示・9月13日投開票）をめぐってXで流通した情報に付いたコミュニティノートを継続収集し、内容ごとに分類して時系列で可視化する観測サイト。",
+    "eyebrowLabel": "BirdXplorer コミュニティノート観測",
+    "scheduleLabel": "2026年8月27日告示 ・ 9月13日投開票",
+    "monitorStartAt": 1785510000000,
+    "monitorEndDate": "2026-09-20",
+    "searchKeywords": [
+      "沖縄",
+      "辺野古",
+      "琉球",
+      "海保",
+      "極左",
+      "遺族",
+      "綱紀粛正",
+      "デニー",
+      "米兵",
+      "玉城",
+      "古謝",
+      "知事",
+      "選挙",
+      "告示",
+      "投票",
+      "開票",
+      "期日前",
+      "立候補",
+      "当選",
+      "落選",
+      "陣営",
+      "演説"
+    ],
+    "llmContextPhrase": "2026年9月13日投開票の沖縄県知事選挙",
+    "llmContextPhraseCompact": "2026年の沖縄県知事選挙",
+    "llmContextPhraseShort": "沖縄県知事選",
+    "keyMoments": [
+      {
+        "at": 1787756400000,
+        "markerLabel": "告示 08/27"
+      },
+      {
+        "at": 1789225200000,
+        "markerLabel": "投開票 09/13"
+      }
+    ],
+    "keyMomentLabel": "投開票日",
+    "keyMomentValue": "9月13日",
+    "githubRepo": "codeforjapan/okinawa-election-dashboard",
+    "appTitle": "okinawa-election-dashboard",
+    "issuesUrl": "https://github.com/codeforjapan/okinawa-election-dashboard/issues",
+    "officialSourcesIntro": "選挙の日程・候補者・投票所・開票結果に関する一次情報は",
+    "officialSources": [
+      {
+        "label": "沖縄県選挙管理委員会",
+        "url": "https://www.pref.okinawa.lg.jp/kensei/senkyo/1005009/1023802/1040303/index.html"
+      },
+      {
+        "label": "総務省（選挙）",
+        "url": "https://www.soumu.go.jp/senkyo/senkyo_s/"
+      }
+    ],
+    "officialSourcesDisclaimer": "本サイトは特定の候補者・政党を支持または反対するものではなく、選挙運動を目的とするものではありません。",
+    "searchlightTopicId": null
+  },
+  "overrides": {}
+}

@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { neon, type NeonQueryFunction } from "@neondatabase/serverless";
 import { env } from "./env";
+import { pendingMigrations, splitStatements } from "./migrations";
 
 /**
  * Neon Postgres クライアント。
@@ -60,21 +61,23 @@ export function parseJsonbMaybe(value: unknown): unknown {
 
 /**
  * migrations/*.sql を古い順（ファイル名の辞書順）に適用する。
- * 各ファイルは `create ... if not exists` 等で冪等に書かれている前提（実際の設計判断は
- * migrations/001_init.sql 冒頭コメント参照）ため、何度呼んでも安全。
+ *
+ * 適用済みのファイルは `schema_migrations` に記録し、次回以降は飛ばす。
+ * 以前は全ファイルを毎回流し、各ファイルが冪等であることに頼っていた。しかし 006 のように
+ * 主キーやインデックスを付け替えるファイルは、冪等に書けても関数のコールドスタートの度に
+ * 再作成することになり（ロックと負荷）、記録で1回きりにする。
+ * 各ファイルは引き続き冪等に書く（記録の insert 前に落ちた場合の再試行と、
+ * 並行したコールドスタートが同じファイルを流す場合に備える）。
  *
  * Neon の HTTP ドライバは1回の呼び出しにつき1ステートメントが基本（tagged template /
  * query() はどちらも単一ステートメント用）。ファイル内の複数ステートメントを
  * 1回のラウンドトリップで送るために `transaction()` の関数形式
  * （txn => [...]）を使う — これは「非対話的トランザクション」であり、
  * 各クエリが前のクエリの結果を参照する必要はないため、この用途にちょうど合う。
- * 同じファイル内のステートメントは全体がひとつの原子的単位として適用される
- * （途中で失敗すればファイル全体がロールバックされ、次回また丸ごと再試行できる）。
+ * ファイル内のステートメントと適用済み記録の insert は同じトランザクションに入れる。
+ * 途中で失敗すればファイル全体と記録がロールバックされ、次回また丸ごと再試行できる。
  *
- * 分割はコメント行（行頭が `--`）を除去してから `;` で単純に区切る。
- * migrations/001_init.sql にはドル引用のブロック（関数定義等）や文字列リテラル内の
- * `;` が存在しないことを確認済み。将来そうしたステートメントを含むファイルを
- * 追加する場合はこの分割ロジックの見直しが必要。
+ * 分割の仕様は splitStatements()（migrations.ts）を参照。
  */
 export async function migrate(): Promise<{ files: string[] }> {
   const dir = join(process.cwd(), "migrations");
@@ -82,19 +85,21 @@ export async function migrate(): Promise<{ files: string[] }> {
     .filter((f) => f.endsWith(".sql"))
     .sort();
 
-  for (const file of files) {
-    const text = readFileSync(join(dir, file), "utf8");
-    const statements = text
-      .split("\n")
-      .filter((line) => !line.trim().startsWith("--"))
-      .join("\n")
-      .split(";")
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
+  await sql().query(
+    "create table if not exists schema_migrations (file text primary key, applied_at bigint not null)",
+  );
+  const rows = await sql().query("select file from schema_migrations");
+  const applied = new Set(rows.map((r) => String(r.file)));
 
-    if (statements.length === 0) continue;
-
-    await sql().transaction((txn) => statements.map((stmt) => txn.query(stmt)));
+  for (const file of pendingMigrations(files, applied)) {
+    const statements = splitStatements(readFileSync(join(dir, file), "utf8"));
+    await sql().transaction((txn) => [
+      ...statements.map((stmt) => txn.query(stmt)),
+      txn.query(
+        "insert into schema_migrations (file, applied_at) values ($1, $2) on conflict (file) do nothing",
+        [file, Date.now()],
+      ),
+    ]);
   }
 
   return { files };

@@ -1,13 +1,13 @@
-import { EVENT } from "@/lib/event";
+import type { PublicTenantConfig } from "@/lib/tenant/types";
 import { formatCount } from "@/lib/view";
 
 /**
  * ヘッダー(design.md §6.1)。稼働ドットの明滅は「データが継続収集されている」ことの表現なので、
  * 収集終了後(§9)は静止した灰色ドットに切り替え、終了メッセージを明示する。
- * イベント名・発生日時はこのサイトが単一イベント固定のモニタである(spec.md §1)ため、
- * クラスタや件数と違って動的に算出せず、event.ts の文言をそのまま表示する。
+ * 事例名・日程はクラスタや件数と違って動的に算出せず、事例設定の文言をそのまま表示する。
  */
 type HeaderProps = {
+  config: Pick<PublicTenantConfig, "eyebrowLabel" | "siteTitle" | "scheduleLabel">;
   periodLabel: string;
   totalNotes: number;
   updatedAtLabel: string | null;
@@ -17,6 +17,7 @@ type HeaderProps = {
 };
 
 export function Header({
+  config,
   periodLabel,
   totalNotes,
   updatedAtLabel,
@@ -32,12 +33,12 @@ export function Header({
             monitoringEnded ? "bg-label" : "bg-accent pulse-dot"
           }`}
         />
-        <span className={monitoringEnded ? "text-label" : "text-accent"}>{EVENT.eyebrowLabel}</span>
+        <span className={monitoringEnded ? "text-label" : "text-accent"}>{config.eyebrowLabel}</span>
       </div>
       <h1 className="text-[24px] font-bold tracking-tight text-heading sm:text-[30px]">
-        {EVENT.siteTitle}
+        {config.siteTitle}
       </h1>
-      <p className="tabular text-[12px] text-muted sm:text-[13px]">{EVENT.occurredAtLabel}</p>
+      <p className="tabular text-[12px] text-muted sm:text-[13px]">{config.scheduleLabel}</p>
       <p className="text-[12px] text-muted sm:text-[13px]">
         対象期間 {periodLabel} ・ 集計 {formatCount(totalNotes)}件
         {updatedAtLabel ? ` ・ 最終更新 ${updatedAtLabel}` : ""}

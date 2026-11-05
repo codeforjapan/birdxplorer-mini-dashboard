@@ -1,8 +1,9 @@
 import { createCluster } from "@/lib/clusters";
-import { env } from "@/lib/env";
-import { CLASSIFIER_VERSION, assignClusters, scoreRelevance } from "@/lib/llm";
+import { assignClusters, judgeRelevance, scoreRelevance } from "@/lib/llm";
 import type { AssignInput, RelevanceInput } from "@/lib/llm";
 import type { Classification } from "@/lib/birdxplorer";
+import type { TenantConfig } from "@/lib/tenant/types";
+import { RELEVANCE_RELATED, RELEVANCE_UNRELATED } from "@/lib/types";
 import type { Cluster } from "@/lib/types";
 
 /**
@@ -34,7 +35,45 @@ export type ClassifyResult = {
   newClusters: Cluster[];
 };
 
-export async function classifyBatch(clusters: Cluster[], candidates: Candidate[]): Promise<ClassifyResult> {
+/** Stage1 の結果を方式によらない形にそろえたもの。以降の処理は方式を意識しない。 */
+type Stage1Entry = { noteId: string; relevance: number; passed: boolean; reason: string };
+
+async function runStage1(
+  cfg: TenantConfig,
+  inputs: RelevanceInput[],
+): Promise<{ entries: Stage1Entry[]; failedNoteIds: string[] }> {
+  if (cfg.relevanceMode === "binary") {
+    const r = await judgeRelevance(cfg, inputs);
+    return {
+      entries: r.results.map((x) => {
+        const passed = x.verdict === "related";
+        return {
+          noteId: x.noteId,
+          relevance: passed ? RELEVANCE_RELATED : RELEVANCE_UNRELATED,
+          passed,
+          reason: x.reason,
+        };
+      }),
+      failedNoteIds: r.failedNoteIds,
+    };
+  }
+  const r = await scoreRelevance(cfg, inputs);
+  return {
+    entries: r.results.map((x) => ({
+      noteId: x.noteId,
+      relevance: x.relevance,
+      passed: x.relevance >= cfg.relevanceThreshold,
+      reason: x.reason,
+    })),
+    failedNoteIds: r.failedNoteIds,
+  };
+}
+
+export async function classifyBatch(
+  cfg: TenantConfig,
+  clusters: Cluster[],
+  candidates: Candidate[],
+): Promise<ClassifyResult> {
   const classifications = new Map<string, Classification>();
   const failedNoteIds = new Set<string>();
   const failureReasons = new Map<string, string>();
@@ -45,7 +84,6 @@ export async function classifyBatch(clusters: Cluster[], candidates: Candidate[]
   }
 
   const now = Date.now();
-  const threshold = env().RELEVANCE_THRESHOLD;
   const summaryByNoteId = new Map(candidates.map((c) => [c.noteId, c.summary]));
 
   // ── Stage1: 関連性判定 ──
@@ -54,35 +92,35 @@ export async function classifyBatch(clusters: Cluster[], candidates: Candidate[]
     summary: c.summary,
     postText: c.postText,
   }));
-  const stage1 = await scoreRelevance(relevanceInputs);
+  const stage1 = await runStage1(cfg, relevanceInputs);
   for (const noteId of stage1.failedNoteIds) {
     failedNoteIds.add(noteId);
     failureReasons.set(noteId, "stage1(relevance): LLM 応答が得られなかった");
   }
 
-  const relevanceByNoteId = new Map(stage1.results.map((r) => [r.noteId, r]));
-  const passedRelevance = stage1.results.filter((r) => r.relevance >= threshold);
+  const relevanceByNoteId = new Map(stage1.entries.map((r) => [r.noteId, r]));
+  const passedRelevance = stage1.entries.filter((r) => r.passed);
 
-  // 閾値未満はソフト除外として確定させる（Stage2 には進めない。データからは消さない — docs/spec.md §4）。
-  for (const r of stage1.results) {
-    if (r.relevance < threshold) {
+  // 不通過はソフト除外として確定させる（Stage2 には進めない。データからは消さない — docs/spec.md §4）。
+  for (const r of stage1.entries) {
+    if (!r.passed) {
       classifications.set(r.noteId, {
         relevance: r.relevance,
         excluded: true,
         excludeReason: r.reason,
         clusterId: null,
         classifiedAt: now,
-        classifierVersion: CLASSIFIER_VERSION,
+        classifierVersion: cfg.classifierVersion,
       });
     }
   }
 
-  // ── Stage2: クラスタ割当（閾値以上のノートのみ）──
+  // ── Stage2: クラスタ割当（Stage1 を通過したノートのみ）──
   const assignInputs: AssignInput[] = passedRelevance.map((r) => ({
     noteId: r.noteId,
     summary: summaryByNoteId.get(r.noteId) ?? "",
   }));
-  const stage2 = await assignClusters(clusters, assignInputs);
+  const stage2 = await assignClusters(cfg, clusters, assignInputs);
   for (const noteId of stage2.failedNoteIds) {
     failedNoteIds.add(noteId);
     failureReasons.set(noteId, "stage2(assign): LLM 応答が得られなかった");
@@ -120,7 +158,7 @@ export async function classifyBatch(clusters: Cluster[], candidates: Candidate[]
       excludeReason: null,
       clusterId,
       classifiedAt: now,
-      classifierVersion: CLASSIFIER_VERSION,
+      classifierVersion: cfg.classifierVersion,
     });
   }
 

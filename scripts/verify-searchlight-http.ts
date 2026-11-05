@@ -243,13 +243,13 @@ const checks: [string, () => Promise<void> | void][] = [
     "12: 安全上限での打ち切りを truncated で返す（最終ページ到達と区別する）",
     async () => {
       const hitLimit = fakeInsightSession(50);
-      const truncated = await getInsights(hitLimit.session, 0);
+      const truncated = await getInsights(hitLimit.session, "topic-test", 0);
       assert.equal(truncated.truncated, true, "満杯のまま MAX_PAGES を使い切ったら打ち切り");
       assert.equal(hitLimit.pages.length, 50, "MAX_PAGES を超えてページを叩かない");
       assert.equal(truncated.rows.length, 5000);
 
       const lastPage = fakeInsightSession(1);
-      const complete = await getInsights(lastPage.session, 0);
+      const complete = await getInsights(lastPage.session, "topic-test", 0);
       assert.equal(complete.truncated, false, "1ページ上限未満が返ったら正常終了");
       assert.equal(lastPage.pages.length, 2);
       assert.equal(complete.rows.length, 103);

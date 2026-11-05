@@ -1,16 +1,14 @@
 import { searchNotes } from "@/lib/birdxplorer";
-import { runCronJob } from "@/lib/cron";
+import { runTenantCronJob } from "@/lib/cron";
 import { sql } from "@/lib/db";
-import { env } from "@/lib/env";
-import { CLASSIFIER_VERSION } from "@/lib/llm";
 import { publishSnapshot, readClusters, readNotes, upsertClusters, upsertNotes } from "@/lib/store";
 import type { Note } from "@/lib/types";
 import { ensureMigrated } from "../../cron/_lib/migrate-once";
 import { classifyBatch, type Candidate } from "../../cron/ingest/classify";
 
 /**
- * Stage 1 のプロンプト改訂（CLASSIFIER_VERSION が上がったとき）に、既存ノートを
- * 新しい基準で再分類するための管理用エンドポイント。
+ * Stage 1 のプロンプト改訂（型の classifierVersion が上がったとき）に、1事例の既存ノートを
+ * 新しい基準で再分類するための管理用エンドポイント。`?tenant=<slug>` 必須。
  *
  * `ingest` とは別ジョブにする理由: ingest は「まだ notes に無いノート」だけを分類する
  * 経路であり、既存の分類済み行を洗い直す用途とは目的も安全条件も異なる
@@ -45,7 +43,7 @@ function parseLimit(req: Request): number {
 }
 
 export async function POST(req: Request): Promise<Response> {
-  return runCronJob("reclassify", req, async () => {
+  return runTenantCronJob("reclassify", req, async (cfg) => {
     await ensureMigrated();
     const limit = parseLimit(req);
 
@@ -62,7 +60,8 @@ export async function POST(req: Request): Promise<Response> {
 
     // ── 対象件数を先に数える（診断・進捗確認用。この値自体は更新しない）──
     const countRows = await sql()`
-      select count(*)::int as count from notes where classifier_version <> ${CLASSIFIER_VERSION}
+      select count(*)::int as count from notes
+      where tenant_id = ${cfg.slug} and classifier_version <> ${cfg.classifierVersion}
     `;
     stats.remainingBefore = Number(countRows[0]?.count ?? 0);
     if (stats.remainingBefore === 0) return stats;
@@ -74,7 +73,7 @@ export async function POST(req: Request): Promise<Response> {
     const rows = await sql()`
       select note_id, summary
       from notes
-      where classifier_version <> ${CLASSIFIER_VERSION}
+      where tenant_id = ${cfg.slug} and classifier_version <> ${cfg.classifierVersion}
       order by note_id asc
       limit ${limit}
     `;
@@ -87,17 +86,17 @@ export async function POST(req: Request): Promise<Response> {
 
     // ── postText の再取得 ──
     // Postgres には post 本文を保存していない（CLAUDE.md「絶対に永続化しないもの」）ため、
-    // 分類精度のために BirdXplorer API から取り直す。MONITOR_START_AT 以降の全件を1回で
+    // 分類精度のために BirdXplorer API から取り直す。監視開始以降の全件を1回で
     // 取得し、noteId でマッチングする（診断で summary のみだと relevance が下振れする
     // ノートがあることを確認済み）。SearchedNote.post は postId が非空でも null になり得るため、
     // その場合は postText: null のまま再分類する（呼び出し側での回避手段がない）。
-    const { records } = await searchNotes({ from: env().MONITOR_START_AT });
+    const { records } = await searchNotes({ from: cfg.monitorStartAt, keywords: cfg.searchKeywords });
     const postTextByNoteId = new Map(records.map((r) => [r.raw.noteId, r.postText]));
 
     // 対象ノートの完全な既存行を読み、分類系フィールドだけを差し替えて書き戻す。
     // readNotes() は全件読みだが、ingest のリトライ経路と同じ理由
     // （ID指定で数件だけ読む専用関数が無い・単一イベントモニタで規模が小さい）で許容する。
-    const allNotes = await readNotes();
+    const allNotes = await readNotes(cfg.slug);
     const existingByNoteId = new Map(allNotes.filter((n) => targetIdSet.has(n.noteId)).map((n) => [n.noteId, n]));
 
     const candidates: Candidate[] = targetIds.map((noteId) => {
@@ -113,8 +112,8 @@ export async function POST(req: Request): Promise<Response> {
     // ── Stage1/2 を既存のバッチ分類パイプラインで実行 ──
     // ingest と同じ classifyBatch を通すことで、新規クラスタの採番（createCluster）や
     // 同名クラスタ提案の重複排除が ingest と完全に同一の挙動になる。
-    const clusters = await readClusters();
-    const result = await classifyBatch(clusters, candidates);
+    const clusters = await readClusters(cfg.slug);
+    const result = await classifyBatch(cfg, clusters, candidates);
     stats.newClusters = result.newClusters.length;
     stats.failed = result.failedNoteIds.size;
 
@@ -139,10 +138,10 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     // クラスタ→ノートの順で書き込む（notes.cluster_id の外部キー制約のため。ingest と同じ順序）。
-    await upsertClusters(result.newClusters);
-    await upsertNotes(updatedNotes);
+    await upsertClusters(cfg.slug, result.newClusters);
+    await upsertNotes(cfg.slug, updatedNotes);
 
-    await publishSnapshot();
+    await publishSnapshot(cfg);
 
     return stats;
   });

@@ -1,5 +1,5 @@
 import { activeClusters, resolveClusterId } from "@/lib/clusters";
-import { runCronJob } from "@/lib/cron";
+import { runTenantCronJob } from "@/lib/cron";
 import { planRecluster } from "@/lib/llm";
 import type { ReclusterPlan, ReportCluster } from "@/lib/llm";
 import { publishSnapshot, readClusters, readNotes, upsertClusters } from "@/lib/store";
@@ -86,13 +86,13 @@ function applyPlan(clusters: readonly Cluster[], plan: ReclusterPlan): Cluster[]
 
 /** Vercel cron は GET で発火するため GET が本体（ingest/route.ts の同じ注記を参照）。 */
 export async function GET(req: Request): Promise<Response> {
-  return runCronJob("recluster", req, async () => {
+  return runTenantCronJob("recluster", req, async (cfg) => {
     await ensureMigrated();
 
-    const [clusters, notes] = await Promise.all([readClusters(), readNotes()]);
+    const [clusters, notes] = await Promise.all([readClusters(cfg.slug), readNotes(cfg.slug)]);
     const reportClusters = buildReportClusters(clusters, notes);
 
-    const plan = await planRecluster(reportClusters);
+    const plan = await planRecluster(cfg, reportClusters);
 
     // null は「今回はスキップ」。状態には一切触れず、次の時間に持ち越す（決定どおり）。
     if (plan === null) {
@@ -100,8 +100,8 @@ export async function GET(req: Request): Promise<Response> {
     }
 
     const changed = applyPlan(clusters, plan);
-    await upsertClusters(changed);
-    await publishSnapshot();
+    await upsertClusters(cfg.slug, changed);
+    await publishSnapshot(cfg);
 
     const merged = plan.merge.reduce((sum, m) => sum + m.from.length, 0);
     return {

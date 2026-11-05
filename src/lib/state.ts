@@ -19,10 +19,13 @@ import type { JobName, JobRun } from "./types";
  * 分類に失敗したノートは意図的に notes に入れない（リトライキュー行きにする）ため、
  * ここで「未処理」と判定されて次回また取得対象になるのが正しい再試行経路。
  */
-export async function filterUnseen(noteIds: readonly string[]): Promise<string[]> {
+export async function filterUnseen(tenantId: string, noteIds: readonly string[]): Promise<string[]> {
   if (noteIds.length === 0) return [];
 
-  const rows = await sql()`select note_id from notes where note_id = any(${noteIds as string[]}::text[])`;
+  // 同じ note_id が別の事例に既にあっても、この事例では未処理として扱う
+  const rows = await sql()`
+    select note_id from notes
+    where tenant_id = ${tenantId} and note_id = any(${noteIds as string[]}::text[])`;
   const seen = new Set(rows.map((r) => String(r.note_id)));
   return noteIds.filter((id) => !seen.has(id));
 }
@@ -59,14 +62,15 @@ function mapRetryRow(row: RetryQueueRow): RetryQueueEntry {
  * （2回目以降の分類失敗を重複行ではなく1行の再試行回数として記録するため）。
  */
 export async function enqueueRetry(
+  tenantId: string,
   noteId: string,
   reason: string | null,
   now: number = Date.now(),
 ): Promise<void> {
   await sql()`
-    insert into retry_queue (note_id, enqueued_at, attempts, reason)
-    values (${noteId}, ${now}, 1, ${reason})
-    on conflict (note_id) do update set
+    insert into retry_queue (tenant_id, note_id, enqueued_at, attempts, reason)
+    values (${tenantId}, ${noteId}, ${now}, 1, ${reason})
+    on conflict (tenant_id, note_id) do update set
       attempts = retry_queue.attempts + 1,
       enqueued_at = excluded.enqueued_at,
       reason = excluded.reason
@@ -82,19 +86,24 @@ export async function enqueueRetry(
  * 判断する）。すでにキューから外れた行を黙って捨てるのではなく、必ず戻り値として
  * 返すことで、呼び出し側が「恒久的に失敗しているノート」をログ等に残す機会を保つ。
  */
-export async function drainRetryQueue(limit: number): Promise<RetryQueueEntry[]> {
+export async function drainRetryQueue(tenantId: string, limit: number): Promise<RetryQueueEntry[]> {
+  // 外側にも tenant_id を入れるのは、副問い合わせが選んだ note_id が別の事例の同じ note_id の行まで
+  // 巻き込んで削除しないため
   const rows = await sql()`
     delete from retry_queue
-    where note_id in (
-      select note_id from retry_queue order by enqueued_at asc limit ${limit}
-    )
+    where tenant_id = ${tenantId}
+      and note_id in (
+        select note_id from retry_queue
+        where tenant_id = ${tenantId}
+        order by enqueued_at asc limit ${limit}
+      )
     returning note_id, enqueued_at, attempts, reason
   `;
   return rows.map((r) => mapRetryRow(r as unknown as RetryQueueRow));
 }
 
-export async function countRetryQueue(): Promise<number> {
-  const rows = await sql()`select count(*)::int as count from retry_queue`;
+export async function countRetryQueue(tenantId: string): Promise<number> {
+  const rows = await sql()`select count(*)::int as count from retry_queue where tenant_id = ${tenantId}`;
   return Number(rows[0]?.count ?? 0);
 }
 
@@ -121,11 +130,12 @@ function mapJobRunRow(row: JobRunRow): JobRun {
   };
 }
 
-/** job ごとに最新の実行結果だけを保持する（job が主キー）。 */
-export async function recordRun(run: JobRun): Promise<void> {
+/** 事例×job ごとに最新の実行結果だけを保持する（(tenant_id, job) が主キー）。 */
+export async function recordRun(tenantId: string, run: JobRun): Promise<void> {
   await sql()`
-    insert into job_runs (job, started_at, finished_at, ok, stats, error)
+    insert into job_runs (tenant_id, job, started_at, finished_at, ok, stats, error)
     values (
+      ${tenantId},
       ${run.job},
       ${run.startedAt},
       ${run.finishedAt},
@@ -133,7 +143,7 @@ export async function recordRun(run: JobRun): Promise<void> {
       ${JSON.stringify(run.stats)}::jsonb,
       ${run.error}
     )
-    on conflict (job) do update set
+    on conflict (tenant_id, job) do update set
       started_at = excluded.started_at,
       finished_at = excluded.finished_at,
       ok = excluded.ok,
@@ -142,11 +152,11 @@ export async function recordRun(run: JobRun): Promise<void> {
   `;
 }
 
-export async function getRun(job: JobName): Promise<JobRun | null> {
+export async function getRun(tenantId: string, job: JobName): Promise<JobRun | null> {
   const rows = await sql()`
     select job, started_at, finished_at, ok, stats, error
     from job_runs
-    where job = ${job}
+    where tenant_id = ${tenantId} and job = ${job}
   `;
   if (rows.length === 0) return null;
   return mapJobRunRow(rows[0] as unknown as JobRunRow);

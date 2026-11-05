@@ -1,14 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { EVENT } from "@/lib/event";
-import { hhmm } from "@/lib/time";
+import type { KeyMoment } from "@/lib/tenant/types";
+import { binRangeLabel, binTickLabel } from "@/lib/time";
 import type { CrossChartBin } from "@/lib/view";
 
 /**
  * 非Xの「投稿量の時系列」を X 風に見せる単系列バーチャート。
  * X の Chart（クラスタ積み上げ）とは用途が違うため流用せず、単純な単系列として新規に書く。
- * 共通軸の bins を受け取り、本震(赤の破線)・整数Y・時刻ラベル・クリック選択・ホバーツールチップを描く。
+ * 共通軸の bins を受け取り、基準線(赤の破線)・整数Y・時刻ラベル・クリック選択・ホバーツールチップを描く。
  * preserveAspectRatio="none" で親幅に追従するため、線は vector-effect=non-scaling-stroke で太さを一定に保つ。
  */
 const W = 960;
@@ -38,12 +38,14 @@ function niceIntTicks(max: number, targetCount: number): number[] {
 
 export function PfVolumeChart({
   bins,
-  mainshockAt,
+  binMinutes,
+  keyMoments,
   selectedBinStartAt,
   onSelectBin,
 }: {
   bins: CrossChartBin[];
-  mainshockAt: number;
+  binMinutes: number;
+  keyMoments: readonly KeyMoment[];
   selectedBinStartAt: number | null;
   onSelectBin: (startAt: number) => void;
 }) {
@@ -57,7 +59,7 @@ export function PfVolumeChart({
   const plotH = H - PAD_TOP - PAD_BOTTOM;
   const slot = plotW / bins.length;
   const barWidth = Math.max(1, slot * 0.7);
-  const binMs = bins.length > 1 ? bins[1].startAt - bins[0].startAt : 30 * 60 * 1000;
+  const binMs = binMinutes * 60 * 1000;
 
   const maxCount = Math.max(1, ...bins.map((b) => b.count));
   const yTicks = niceIntTicks(maxCount, 3);
@@ -65,13 +67,15 @@ export function PfVolumeChart({
   const scaleY = (v: number) => PAD_TOP + plotH - (v / yMax) * plotH;
   const xLeft = (i: number) => PAD_LEFT + slot * i + (slot - barWidth) / 2;
 
-  // 本震が軸範囲内にあるときだけ破線を引く。
+  // 基準線は軸範囲内にあるものだけ引く。
   const axisStart = bins[0].startAt;
   const axisEnd = bins[bins.length - 1].startAt + binMs;
-  const mainshockX =
-    mainshockAt >= axisStart && mainshockAt < axisEnd
-      ? PAD_LEFT + ((mainshockAt - axisStart) / (axisEnd - axisStart)) * plotW
-      : null;
+  const markers = keyMoments
+    .filter((m) => m.at >= axisStart && m.at < axisEnd)
+    .map((m) => ({
+      label: m.markerLabel,
+      x: PAD_LEFT + ((m.at - axisStart) / (axisEnd - axisStart)) * plotW,
+    }));
 
   // 時刻ラベルは4ビンおきに間引く。
   const labelEvery = 4;
@@ -122,12 +126,12 @@ export function PfVolumeChart({
           <rect x={PAD_LEFT + slot * hovered} y={PAD_TOP} width={slot} height={plotH} fill="#000000" opacity={0.04} />
         )}
 
-        {/* 本震の破線（赤はここだけ許可） */}
-        {mainshockX !== null && (
-          <>
+        {/* 基準線の破線（赤はここだけ許可） */}
+        {markers.map((m) => (
+          <g key={m.label}>
             <line
-              x1={mainshockX}
-              x2={mainshockX}
+              x1={m.x}
+              x2={m.x}
               y1={PAD_TOP}
               y2={PAD_TOP + plotH}
               stroke="var(--color-accent)"
@@ -135,11 +139,11 @@ export function PfVolumeChart({
               strokeDasharray="3 2"
               vectorEffect="non-scaling-stroke"
             />
-            <text x={mainshockX + 3} y={PAD_TOP + 8} fontSize={8.5} fill="var(--color-accent)">
-              {EVENT.keyMomentLabel} {hhmm(mainshockAt)}
+            <text x={m.x + 3} y={PAD_TOP + 8} fontSize={8.5} fill="var(--color-accent)">
+              {m.label}
             </text>
-          </>
-        )}
+          </g>
+        ))}
 
         {/* バー（単系列・中立色。選択中はインク枠で強調） */}
         {bins.map((b, i) => {
@@ -197,7 +201,7 @@ export function PfVolumeChart({
               fontSize={9}
               fill="var(--color-label)"
             >
-              {hhmm(b.startAt)}
+              {binTickLabel(b.startAt, binMinutes)}
             </text>
           ) : null,
         )}
@@ -214,9 +218,7 @@ export function PfVolumeChart({
             transform: "translate(-50%, calc(-100% - 6px))",
           }}
         >
-          <div className="text-heading">
-            {hhmm(hoveredBin.startAt)}〜{hhmm(hoveredBin.startAt + binMs)}
-          </div>
+          <div className="text-heading">{binRangeLabel(hoveredBin.startAt, hoveredBin.startAt + binMs)}</div>
           <div className="text-weak">投稿 {hoveredBin.count}件</div>
         </div>
       )}

@@ -1,11 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "crons": [
-    { "path": "/api/cron/ingest", "schedule": "*/10 * * * *" },
-    { "path": "/api/cron/recluster", "schedule": "5 * * * *" },
-    { "path": "/api/cron/refresh-status", "schedule": "35 * * * *" },
-    { "path": "/api/cron/report", "schedule": "0 6 * * *" },
-    { "path": "/api/cron/searchlight-sync", "schedule": "22 6 * * *" },
-    { "path": "/api/cron/searchlight-stop", "schedule": "45 6 * * *" }
+    { "path": "/api/cron/dispatch/ingest", "schedule": "*/2 * * * *" },
+    { "path": "/api/cron/dispatch/recluster", "schedule": "5 * * * *" },
+    { "path": "/api/cron/dispatch/refresh-status", "schedule": "35 * * * *" },
+    { "path": "/api/cron/dispatch/report", "schedule": "0 6 * * *" },
+    { "path": "/api/cron/dispatch/searchlight-sync", "schedule": "22 6 * * *" },
+    { "path": "/api/cron/dispatch/searchlight-stop", "schedule": "45 6 * * *" }
   ]
 }

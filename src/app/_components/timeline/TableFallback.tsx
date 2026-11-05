@@ -1,4 +1,4 @@
-import { hhmm } from "@/lib/time";
+import { binTickLabel, binWidthLabel } from "@/lib/time";
 import type { ChartBin, DisplayCluster } from "@/lib/view";
 
 /**
@@ -13,11 +13,19 @@ import type { ChartBin, DisplayCluster } from "@/lib/view";
  * フッター下に巨大な余白が生じる(638行で実測 ~15000px)。ブロック要素の div なら
  * width/height:1px + overflow:hidden が効き、中の table はレイアウトから外れる。
  */
-export function TableFallback({ bins, legend }: { bins: ChartBin[]; legend: DisplayCluster[] }) {
+export function TableFallback({
+  bins,
+  legend,
+  binMinutes,
+}: {
+  bins: ChartBin[];
+  legend: DisplayCluster[];
+  binMinutes: number;
+}) {
   return (
     <div className="sr-only">
       <table>
-        <caption>30分単位のNote付与件数(表形式)</caption>
+        <caption>{binWidthLabel(binMinutes)}単位のNote付与件数(表形式)</caption>
         <thead>
           <tr>
             <th scope="col">時間帯</th>
@@ -32,7 +40,7 @@ export function TableFallback({ bins, legend }: { bins: ChartBin[]; legend: Disp
         <tbody>
           {bins.map((bin) => (
             <tr key={bin.startAt}>
-              <th scope="row">{hhmm(bin.startAt)}</th>
+              <th scope="row">{binTickLabel(bin.startAt, binMinutes)}</th>
               {legend.map((c) => (
                 <td key={c.id}>{bin.segments.find((s) => s.id === c.id)?.count ?? 0}</td>
               ))}

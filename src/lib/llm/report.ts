@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { EVENT } from "../event";
+import type { TenantConfig } from "../tenant/types";
 import { mmddhhmm } from "../time";
 import { chatJson } from "./client";
 import type { DigestInput } from "./contract";
@@ -37,9 +37,30 @@ function stripMarkdownFence(text: string): string {
   return (fenceMatch ? fenceMatch[1] : trimmed).trim();
 }
 
+/** "2026-09-20" → "2026年9月20日"。運用終了日をプロンプトに事例ごとに差し込む。 */
+function formatJaDate(isoDay: string): string {
+  const [y, m, d] = isoDay.split("-").map(Number);
+  return `${y}年${m}月${d}日`;
+}
+
+/**
+ * 選挙型（中立性ルールを持つ型）だけに付く、レポート本文の中立性セクション。
+ * 命名規約の有無で選挙かどうかを判定するのは、型ごとの taxonomy が唯一の差分の置き場だから。
+ */
+function neutralitySection(cfg: TenantConfig): string {
+  if (!cfg.taxonomy.namingNeutralityRule) return "";
+  return `
+
+中立性（選挙が対象であるため必須）:
+- 特定の候補者・政党を支持する、あるいは批判する立場を取らないでください。
+  当落の予測、候補者の優劣の評価、投票の呼びかけは一切書かないでください。
+- ある候補者に関する言説の件数が多いことを、その候補者の評価や情勢の判断に結びつけないでください。`;
+}
+
 // ── Stage 4: 日次ダイジェスト ──
 
-const DIGEST_SYSTEM_PROMPT = `あなたは「${EVENT.llmContextPhraseCompact}」に関する誤情報モニタリングサイトの日次ダイジェストを書く記者です。
+export function buildDigestSystemPrompt(cfg: TenantConfig): string {
+  return `あなたは「${cfg.llmContextPhraseCompact}」に関する誤情報モニタリングサイトの日次ダイジェストを書く記者です。
 出力は日本語 Markdown 本文のみです（JSONのキーは "markdown" 1つだけで、その値が本文全体になります）。
 
 厳守するフォーマット:
@@ -56,14 +77,16 @@ const DIGEST_SYSTEM_PROMPT = `あなたは「${EVENT.llmContextPhraseCompact}」
 - このサイト自体が誤情報のデマ内容を紹介する性質上、デマの中身を紹介する際は
   「〜という投稿が確認された」「〜という主張が広がった」等、事実として発生した投稿の存在を述べる書き方にし、
   デマの内容そのものを事実であるかのように断定する書き方はしない。
-- 淡々とした記録調で書く。煽り立てる表現・感嘆符は使わない。`;
+- 淡々とした記録調で書く。煽り立てる表現・感嘆符は使わない。${neutralitySection(cfg)}`;
+}
 
-export async function writeDailyDigest(input: DigestInput): Promise<string | null> {
+export async function writeDailyDigest(cfg: TenantConfig, input: DigestInput): Promise<string | null> {
   const rangeLabel = `${mmddhhmm(input.from)}〜${mmddhhmm(input.to)}`;
 
   const outcome = await chatJson({
+    attribution: { githubRepo: cfg.githubRepo, appTitle: cfg.appTitle },
     stage: "digest",
-    systemPrompt: DIGEST_SYSTEM_PROMPT,
+    systemPrompt: buildDigestSystemPrompt(cfg),
     userPayload: {
       range_label: rangeLabel,
       total_notes: input.totalNotes,
@@ -95,8 +118,8 @@ export async function writeDailyDigest(input: DigestInput): Promise<string | nul
  * 累積レポートのドリフト対策（docs/spec.md §8-1）。
  *
  * 累積レポートは「前日の累積レポート本文」を入力に取り、それに当日分を継ぎ足して
- * 上書き生成する。これを最大34日間、毎日繰り返す。つまり最終的な累積レポートは
- * 「LLMが自分の前回の出力を要約し直したものを、さらに要約し直す」を34回繰り返した産物になる
+ * 上書き生成する。これを運用期間中（事例ごとに数週間）毎日繰り返す。つまり最終的な累積レポートは
+ * 「LLMが自分の前回の出力を要約し直したものを、さらに要約し直す」を日数分繰り返した産物になる
  * ―― 伝言ゲームであり、小さな歪み・断定の強まり・数字の書き換わりが複利的に蓄積しうる。
  *
  * これに対する対策は仕組みではなくプロンプトでしか効かせられない（累積レポートの
@@ -115,8 +138,9 @@ export async function writeDailyDigest(input: DigestInput): Promise<string | nul
  * 代わりに長さを Vercel のランタイムログに記録し、運用時に気づけるようにする
  * （docs/spec.md §8-7: ログが唯一の監視手段）。
  */
-const CUMULATIVE_SYSTEM_PROMPT = `あなたは「${EVENT.llmContextPhraseCompact}」に関する誤情報モニタリングサイトの累積レポートを維持する編集者です。
-このレポートは運用終了（2026年8月31日）まで毎日、当日分のダイジェストを継ぎ足しながら更新され続けます。
+export function buildCumulativeSystemPrompt(cfg: TenantConfig): string {
+  return `あなたは「${cfg.llmContextPhraseCompact}」に関する誤情報モニタリングサイトの累積レポートを維持する編集者です。
+このレポートは運用終了（${formatJaDate(cfg.monitorEndDate)}）まで毎日、当日分のダイジェストを継ぎ足しながら更新され続けます。
 出力は日本語 Markdown 本文のみです（JSONのキーは "markdown" 1つだけで、その値が本文全体になります）。
 
 最重要の姿勢: 渡される「前回の累積レポート」は書き直してよい下書きではなく、
@@ -132,18 +156,21 @@ const CUMULATIVE_SYSTEM_PROMPT = `あなたは「${EVENT.llmContextPhraseCompact
 - 見出しは "## 全体の推移" のような時系列を俯瞰するセクションと、
   クラスタ（噂の種類）ごとの経過をまとめたセクションで構成してください。
   クラスタ構成は日によって増減するため、固定の見出し数にこだわらなくてよいです。
-- 分量は目安として全体で2000〜3000字程度に収めてください。運用期間が最大34日間続くため、
+- 分量は目安として全体で2000〜3000字程度に収めてください。運用期間が長く続くため、
   日が経つにつれて際限なく長くなることは避けてください。古い日の詳細な経緯は要点のみに圧縮してよいですが、
-  その場合も具体的な事実・数値そのものは失わないようにしてください。`;
+  その場合も具体的な事実・数値そのものは失わないようにしてください。${neutralitySection(cfg)}`;
+}
 
 export async function writeCumulativeReport(
+  cfg: TenantConfig,
   previous: string | null,
   digest: string,
   isoDay: string,
 ): Promise<string | null> {
   const outcome = await chatJson({
+    attribution: { githubRepo: cfg.githubRepo, appTitle: cfg.appTitle },
     stage: "cumulative",
-    systemPrompt: CUMULATIVE_SYSTEM_PROMPT,
+    systemPrompt: buildCumulativeSystemPrompt(cfg),
     userPayload: {
       iso_day: isoDay,
       previous_cumulative_report: previous, // 初日は null。その場合は当日分を土台に新規作成する。

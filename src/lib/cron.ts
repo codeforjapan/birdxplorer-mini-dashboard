@@ -1,13 +1,16 @@
 import { timingSafeEqual } from "node:crypto";
-import { cronSecret, isMonitoringEnded } from "./env";
+import { cronSecret } from "./env";
 import { recordRun } from "./state";
+import { getTenant } from "./tenant/repo";
+import { isTenantMonitoring, isTenantMonitoringEnded, resolveTenantConfig } from "./tenant/resolve";
+import type { TenantConfig, TenantRecord } from "./tenant/types";
 import type { JobName, JobRun } from "./types";
 
 /**
  * cron ハンドラの共通枠。
  *
- * 認証・運用期間の判定・実行記録・エラー捕捉をここに集約する。
- * 各ジョブは「何をするか」だけを書けばよい。
+ * 認証・事例の解決・運用期間の判定・実行記録・エラー捕捉をここに集約する。
+ * 各ジョブは「何をするか」だけを書けばよい。作業ルートは `?tenant=<slug>` で1事例だけを処理する。
  *
  * ジョブは例外を投げてよい。捕捉して KV に記録し 500 を返す
  * （外部通知はなく、Vercel のランタイムログと KV が唯一の追跡手段）。
@@ -42,7 +45,7 @@ export function isForceRequested(url: string): boolean {
   return new URL(url).searchParams.get("force") === "1";
 }
 
-function isAuthorized(req: Request): boolean {
+export function isAuthorized(req: Request): boolean {
   const header = req.headers.get("authorization") ?? "";
   const expected = `Bearer ${cronSecret()}`;
 
@@ -53,44 +56,55 @@ function isAuthorized(req: Request): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-/** ジョブ本体。返した値は実行記録の stats に入る。 */
-export type JobBody = () => Promise<Record<string, number>>;
+/** ジョブ本体。返した値は実行記録の stats に入る。rec は終了処理で公開設定を書き直すときに使う。 */
+export type TenantJobBody = (cfg: TenantConfig, rec: TenantRecord) => Promise<Record<string, number>>;
 
 /**
  * ゲート。skip する理由（文字列）を返すと body は呼ばれない。実行するなら null。
- *
- * 非同期を許すのは、間隔ゲートのように判定自体が DB を読む場合があるため
- * （searchlight-sync）。既存の同期ゲート（isMonitoringEnded）はそのまま渡せる。
+ * 非同期を許すのは、間隔ゲートのように判定自体が DB を読む場合があるため（searchlight-sync）。
  */
-export type SkipGate = () => string | null | Promise<string | null>;
+export type TenantSkipGate = (cfg: TenantConfig) => string | null | Promise<string | null>;
 
 /**
- * 認証・スキップ判定・実行記録・エラー処理を共通化した内部枠。
+ * 認証 → 事例の解決 → ゲート → 本体 → 記録。
  * ゲート（いつ body を呼ばず即返すか）だけを `skipReason` で外から差し込む。
- * `skipReason` が文字列を返したら body を実行せず `{skipped}` を返す（null なら実行）。
  */
-async function runGatedJob(
+async function runTenantGatedJob(
   job: JobName,
   req: Request,
-  body: JobBody,
-  skipReason: SkipGate,
+  body: TenantJobBody,
+  skipReason: TenantSkipGate,
 ): Promise<Response> {
   if (!isAuthorized(req)) {
-    // 認証失敗は KV に記録しない（外部からの試行でジョブ履歴が埋まるのを防ぐ）。
+    // 認証失敗は記録しない（外部からの試行でジョブ履歴が埋まるのを防ぐ）。
     return Response.json({ error: "unauthorized" }, { status: 401 });
   }
 
+  const slug = new URL(req.url).searchParams.get("tenant");
+  if (!slug) return Response.json({ job, error: "tenant-required" }, { status: 400 });
+
+  let rec: TenantRecord | null;
+  try {
+    rec = await getTenant(slug);
+  } catch (e) {
+    // 事例が引けないので事例単位の記録先が無い。ランタイムログだけが追跡手段になる。
+    console.error(`[cron:${job}:${slug}] 事例の読み取りに失敗`, e);
+    return Response.json({ job, tenant: slug, error: "tenant-lookup-failed" }, { status: 500 });
+  }
+  if (!rec) return Response.json({ job, tenant: slug, error: "tenant-not-found" }, { status: 404 });
+
+  const cfg = resolveTenantConfig(rec);
   const startedAt = Date.now();
   let run: JobRun;
 
   try {
-    const skipped = await skipReason();
+    const skipped = await skipReason(cfg);
     // skip は**実行記録を書かずに**返す。書いてしまうと job_runs.finished_at が skip 自身で
     // 前進し、間隔ゲート（isTooSoon）が毎回自分で窓を張り直して本体が永久に動かなくなる。
     // 記録を実際の試行だけに限ることで「最後にいつ本当に同期したか」も追える。
-    if (skipped) return Response.json({ job, skipped });
+    if (skipped) return Response.json({ job, tenant: cfg.slug, skipped });
 
-    const stats = await body();
+    const stats = await body(cfg, rec);
     run = { job, startedAt, finishedAt: Date.now(), ok: true, stats, error: null };
   } catch (e) {
     // skipReason の失敗（間隔ゲートの DB 読み取り等）もここに来る。body は呼ばれていない＝
@@ -106,46 +120,53 @@ async function runGatedJob(
     };
   }
 
-  // 記録の失敗でジョブの成否を覆さない。KV が落ちていても本体が成功したなら成功を返す。
+  // 記録の失敗でジョブの成否を覆さない。DB が落ちていても本体が成功したなら成功を返す。
   try {
-    await recordRun(run);
+    await recordRun(cfg.slug, run);
   } catch (e) {
-    console.error(`[cron:${job}] 実行記録の書き込みに失敗`, e);
+    console.error(`[cron:${job}:${cfg.slug}] 実行記録の書き込みに失敗`, e);
   }
 
-  if (!run.ok) console.error(`[cron:${job}] 失敗`, run.error);
+  if (!run.ok) console.error(`[cron:${job}:${cfg.slug}] 失敗`, run.error);
 
   return Response.json(
-    { job, ok: run.ok, durationMs: run.finishedAt - run.startedAt, stats: run.stats, error: run.error },
+    {
+      job,
+      tenant: cfg.slug,
+      ok: run.ok,
+      durationMs: run.finishedAt - run.startedAt,
+      stats: run.stats,
+      error: run.error,
+    },
     { status: run.ok ? 200 : 500 },
   );
 }
 
 /**
- * 通常 cron の共通枠。監視終了（MONITOR_END_DATE 経過）後は body を呼ばず no-op。
- * デプロイは残し、サイトは静的アーカイブとして機能させる。
+ * 通常 cron の作業ルート。事例が監視中でなければ body を呼ばず no-op
+ * （dispatch が対象を絞るが、手動実行や index の遅れで来ても動かさない）。
  *
- * `extraGate` はジョブ固有の追加ゲート（省略可）。監視終了の判定を通ったときだけ評価する
- * ＝終了後は追加ゲートの副作用（DB 読み取り等）も走らない。ここに渡したゲートは
- * 記録を書かずに skip するため、「skip 自身が間隔の窓をずらす」ことがない。
+ * `extraGate` はジョブ固有の追加ゲート（省略可）。監視中の判定を通ったときだけ評価する
+ * ＝監視外では追加ゲートの副作用（DB 読み取り等）も走らない。
  */
-export async function runCronJob(
+export async function runTenantCronJob(
   job: JobName,
   req: Request,
-  body: JobBody,
-  extraGate?: SkipGate,
+  body: TenantJobBody,
+  extraGate?: TenantSkipGate,
 ): Promise<Response> {
-  return runGatedJob(job, req, body, async () => {
-    if (isMonitoringEnded()) return "monitoring-ended";
-    return extraGate ? await extraGate() : null;
+  return runTenantGatedJob(job, req, body, async (cfg) => {
+    if (!isTenantMonitoring(cfg)) return "not-monitoring";
+    return extraGate ? await extraGate(cfg) : null;
   });
 }
 
 /**
- * 停止（shutdown）ジョブの共通枠。runCronJob とゲートが真逆で、**監視期間が終わってから**
- * 本体を動かす（例: MONITOR_END_DATE 経過後に外部収集を止める）。運用中（未終了）は no-op。
- * body は冪等であること（毎回叩かれても無害）を前提にする。
+ * 停止（shutdown）ジョブの作業ルート。ゲートが runTenantCronJob と逆で、**事例が終わってから**
+ * 本体を動かす（例: 終了後に外部収集を止める）。body は冪等であること（何度叩かれても無害）。
  */
-export async function runShutdownJob(job: JobName, req: Request, body: JobBody): Promise<Response> {
-  return runGatedJob(job, req, body, () => (isMonitoringEnded() ? null : "monitoring-active"));
+export async function runTenantShutdownJob(job: JobName, req: Request, body: TenantJobBody): Promise<Response> {
+  return runTenantGatedJob(job, req, body, (cfg) =>
+    cfg.status === "ended" || isTenantMonitoringEnded(cfg) ? null : "monitoring-active",
+  );
 }

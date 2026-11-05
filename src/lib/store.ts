@@ -1,8 +1,6 @@
-import { writeJson, PATH } from "./blob";
+import { writeJson, tenantPaths } from "./blob";
 import { resolveClusterId } from "./clusters";
-import { BIN_MINUTES } from "./constants";
 import { bigintToNumber, nullableBigintToNumber, sql } from "./db";
-import { env } from "./env";
 import type { CrossPostRow, SearchlightInsightRow } from "./searchlight";
 import { binStart, nextBin } from "./time";
 import type {
@@ -17,6 +15,7 @@ import type {
   TimelineFile,
 } from "./types";
 import type { NoteStatusRefresh } from "./birdxplorer";
+import type { TenantConfig } from "./tenant/types";
 
 /**
  * Postgres（Neon）上の永続データ層。
@@ -142,13 +141,13 @@ function mapCrossRow(row: CrossPostRowDb): CrossPost {
 
 // ── 読み取り ─────────────────────────────────────────────────
 
-export async function readNotes(): Promise<Note[]> {
-  const rows = await sql()`select * from notes order by created_at asc`;
+export async function readNotes(tenantId: string): Promise<Note[]> {
+  const rows = await sql()`select * from notes where tenant_id = ${tenantId} order by created_at asc`;
   return rows.map((r) => mapNoteRow(r as unknown as NoteRow));
 }
 
-export async function readClusters(): Promise<Cluster[]> {
-  const rows = await sql()`select * from clusters order by created_at asc`;
+export async function readClusters(tenantId: string): Promise<Cluster[]> {
+  const rows = await sql()`select * from clusters where tenant_id = ${tenantId} order by created_at asc`;
   return rows.map((r) => mapClusterRow(r as unknown as ClusterRow));
 }
 
@@ -160,7 +159,7 @@ export async function readClusters(): Promise<Cluster[]> {
  * 漏れる）。REPEATABLE READ の読み取り専用トランザクションで両方読むことで、
  * 常にどちらかの世代の一貫したペアになることを保証する。
  */
-async function readSnapshot(): Promise<{
+async function readSnapshot(tenantId: string): Promise<{
   notes: Note[];
   clusters: Cluster[];
   searchlight: Map<string, SearchlightBadge>;
@@ -168,10 +167,10 @@ async function readSnapshot(): Promise<{
 }> {
   const [clusterRows, noteRows, slRows, crossRows] = await sql().transaction(
     (txn) => [
-      txn`select * from clusters`,
-      txn`select * from notes`,
-      txn`select * from searchlight_insights`,
-      txn`select * from searchlight_cross_posts`,
+      txn`select * from clusters where tenant_id = ${tenantId}`,
+      txn`select * from notes where tenant_id = ${tenantId}`,
+      txn`select * from searchlight_insights where tenant_id = ${tenantId}`,
+      txn`select * from searchlight_cross_posts where tenant_id = ${tenantId}`,
     ],
     { isolationLevel: "RepeatableRead", readOnly: true },
   );
@@ -208,19 +207,19 @@ export const UNCLASSIFIED_AT = 0;
  * 可視性: publishSnapshot() が読む Repeatable Read スナップショットに、
  * 「一部のクラスタだけ挿入されている」中途半端な状態を見せないため。
  */
-export async function upsertClusters(clusters: readonly Cluster[]): Promise<void> {
+export async function upsertClusters(tenantId: string, clusters: readonly Cluster[]): Promise<void> {
   if (clusters.length === 0) return;
 
   await sql().transaction((txn) =>
     clusters.map((c) =>
       txn.query(
-        `insert into clusters (id, name, description, color_index, created_at, alias_of)
-         values ($1, $2, $3, $4, $5, $6)
-         on conflict (id) do update set
+        `insert into clusters (id, name, description, color_index, created_at, alias_of, tenant_id)
+         values ($1, $2, $3, $4, $5, $6, $7)
+         on conflict (tenant_id, id) do update set
            name = excluded.name,
            description = excluded.description,
            alias_of = excluded.alias_of`,
-        [c.id, c.name, c.description, c.colorIndex, c.createdAt, c.aliasOf],
+        [c.id, c.name, c.description, c.colorIndex, c.createdAt, c.aliasOf, tenantId],
       ),
     ),
   );
@@ -249,7 +248,7 @@ export async function upsertClusters(clusters: readonly Cluster[]): Promise<void
  * upsertClusters と同じ理由でバッチ全体を1トランザクションにまとめる
  * （publishSnapshot に中途半端なバッチを見せないため）。
  */
-export async function upsertNotes(notes: readonly Note[]): Promise<void> {
+export async function upsertNotes(tenantId: string, notes: readonly Note[]): Promise<void> {
   if (notes.length === 0) return;
 
   const preserveWhenUnclassified = "excluded.classified_at = 0 and notes.classified_at <> 0";
@@ -260,10 +259,10 @@ export async function upsertNotes(notes: readonly Note[]): Promise<void> {
         `insert into notes (
            note_id, post_id, created_at, summary, post_url,
            current_status, helpful_count, not_helpful_count, rate_count, impression_count, status_refreshed_at,
-           relevance, excluded, exclude_reason, cluster_id, classified_at, classifier_version
+           relevance, excluded, exclude_reason, cluster_id, classified_at, classifier_version, tenant_id
          )
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
-         on conflict (note_id) do update set
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+         on conflict (tenant_id, note_id) do update set
            post_id = excluded.post_id,
            created_at = excluded.created_at,
            summary = excluded.summary,
@@ -298,6 +297,7 @@ export async function upsertNotes(notes: readonly Note[]): Promise<void> {
           n.clusterId,
           n.classifiedAt,
           n.classifierVersion,
+          tenantId,
         ],
       ),
     ),
@@ -316,6 +316,7 @@ export async function upsertNotes(notes: readonly Note[]): Promise<void> {
  * （publishSnapshot に半端な更新を見せないため）。
  */
 export async function applyStatusRefresh(
+  tenantId: string,
   statuses: readonly NoteStatusRefresh[],
   now: number = Date.now(),
 ): Promise<void> {
@@ -330,30 +331,33 @@ export async function applyStatusRefresh(
            not_helpful_count = $4,
            rate_count = $5,
            status_refreshed_at = $6
-         where note_id = $1`,
-        [s.noteId, s.currentStatus, s.helpfulCount, s.notHelpfulCount, s.rateCount, now],
+         where tenant_id = $7 and note_id = $1`,
+        [s.noteId, s.currentStatus, s.helpfulCount, s.notHelpfulCount, s.rateCount, now, tenantId],
       ),
     ),
   );
 }
 
 /** Searchlight insight を tweet_id で upsert する（incoming が勝つ）。 */
-export async function upsertSearchlightInsights(rows: readonly SearchlightInsightRow[]): Promise<void> {
+export async function upsertSearchlightInsights(
+  tenantId: string,
+  rows: readonly SearchlightInsightRow[],
+): Promise<void> {
   if (rows.length === 0) return;
   await sql().transaction((txn) =>
     rows.map((r) =>
       txn.query(
         `insert into searchlight_insights
-           (tweet_id, stance, urgency, claim_type, official_source_relationship, official_source_url, synced_at)
-         values ($1, $2, $3, $4, $5, $6, $7)
-         on conflict (tweet_id) do update set
+           (tweet_id, stance, urgency, claim_type, official_source_relationship, official_source_url, synced_at, tenant_id)
+         values ($1, $2, $3, $4, $5, $6, $7, $8)
+         on conflict (tenant_id, tweet_id) do update set
            stance = excluded.stance,
            urgency = excluded.urgency,
            claim_type = excluded.claim_type,
            official_source_relationship = excluded.official_source_relationship,
            official_source_url = excluded.official_source_url,
            synced_at = excluded.synced_at`,
-        [r.tweet_id, r.stance, r.urgency, r.claim_type, r.official_source_relationship, r.official_source_url, r.synced_at],
+        [r.tweet_id, r.stance, r.urgency, r.claim_type, r.official_source_relationship, r.official_source_url, r.synced_at, tenantId],
       ),
     ),
   );
@@ -364,7 +368,7 @@ export async function upsertSearchlightInsights(rows: readonly SearchlightInsigh
  * upsertSearchlightInsights と同じ理由でバッチ全体を1トランザクションにまとめる
  * （publishSnapshot に半端なバッチを見せないため）。
  */
-export async function upsertCrossPosts(rows: readonly CrossPostRow[]): Promise<void> {
+export async function upsertCrossPosts(tenantId: string, rows: readonly CrossPostRow[]): Promise<void> {
   if (rows.length === 0) return;
   await sql().transaction((txn) =>
     rows.map((r) =>
@@ -372,9 +376,9 @@ export async function upsertCrossPosts(rows: readonly CrossPostRow[]): Promise<v
         `insert into searchlight_cross_posts
            (insight_id, platform, url, stance, urgency, claim_type,
             official_source_relationship, official_source_url, claim_summary, published_at, synced_at,
-            views, likes, comments, shares, collects, flame_rate)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
-         on conflict (insight_id) do update set
+            views, likes, comments, shares, collects, flame_rate, tenant_id)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+         on conflict (tenant_id, insight_id) do update set
            platform = excluded.platform,
            url = excluded.url,
            stance = excluded.stance,
@@ -409,6 +413,7 @@ export async function upsertCrossPosts(rows: readonly CrossPostRow[]): Promise<v
           r.shares,
           r.collects,
           r.flame_rate,
+          tenantId,
         ],
       ),
     ),
@@ -427,12 +432,11 @@ function mapSearchlightRow(row: SearchlightInsightRow): SearchlightBadge {
 
 // ── タイムライン集計 ──────────────────────────────────────────
 
-const BIN_MS = BIN_MINUTES * 60 * 1000;
 // 30分ビンで約114年分。データ異常（未来日時の混入等）で巨大配列を生成しないためのガード。
 const MAX_BINS = 2_000_000;
 
 /**
- * フロント表示用に30分ビンを事前集計する。永続層が Blob から Postgres に変わっても
+ * フロント表示用にビンを事前集計する（ビン幅・開始時刻は事例ごと）。永続層が Blob から Postgres に変わっても
  * この関数は入出力とも純粋なままにする（テストしやすさと、書き出し先を差し替える
  * だけで済むようにするため）。
  *
@@ -440,39 +444,46 @@ const MAX_BINS = 2_000_000;
  * - clusterId は resolveClusterId で解決してから数える
  *   （クラスタはマージされ得るので、ノートは吸収済みの古いIDを持ち続ける）
  * - counts は解決後のIDでキーし、0件のクラスタはキーごと省く
- * - MONITOR_START_AT の属するビンから、最新ノートの属するビンまで、
+ * - monitorStartAt の属するビンから、最新ノートの属するビンまで、
  *   ノートが1件も無いビンも空けずに埋める（グラフのX軸を等間隔に保つため）
  * - startAt 昇順でソートして返す
  */
-export function buildTimeline(notes: readonly Note[], clusters: readonly Cluster[], now: number = Date.now()): TimelineFile {
+export function buildTimeline(
+  notes: readonly Note[],
+  clusters: readonly Cluster[],
+  opts: { monitorStartAt: number; binMinutes: number },
+  now: number = Date.now(),
+): TimelineFile {
+  const { binMinutes } = opts;
+  const binMs = binMinutes * 60 * 1000;
   const included = notes.filter((n) => !n.excluded);
-  const start = binStart(env().MONITOR_START_AT);
+  const start = binStart(opts.monitorStartAt, binMinutes);
 
   if (included.length === 0) {
     return {
       generatedAt: now,
-      binMinutes: BIN_MINUTES,
+      binMinutes,
       bins: [{ startAt: start, total: 0, counts: {} }],
     };
   }
 
   const newestCreatedAt = included.reduce((max, n) => Math.max(max, n.createdAt), included[0].createdAt);
-  const end = binStart(newestCreatedAt);
+  const end = binStart(newestCreatedAt, binMinutes);
 
-  const binCount = Math.round((end - start) / BIN_MS) + 1;
+  const binCount = Math.round((end - start) / binMs) + 1;
   if (binCount < 1 || binCount > MAX_BINS) {
     throw new Error(`タイムラインのビン数が異常です (${binCount})。ノートの createdAt を確認してください。`);
   }
 
   const bins = new Map<number, TimelineBin>();
-  for (let at = start; at <= end; at = nextBin(at)) {
+  for (let at = start; at <= end; at = nextBin(at, binMinutes)) {
     bins.set(at, { startAt: at, total: 0, counts: {} });
   }
 
   for (const note of included) {
-    const at = binStart(note.createdAt);
+    const at = binStart(note.createdAt, binMinutes);
     const bin = bins.get(at);
-    // MONITOR_START_AT より前の createdAt など、範囲外の異常データは集計対象外にする。
+    // monitorStartAt より前の createdAt など、範囲外の異常データは集計対象外にする。
     if (!bin) continue;
 
     bin.total++;
@@ -482,7 +493,7 @@ export function buildTimeline(notes: readonly Note[], clusters: readonly Cluster
 
   return {
     generatedAt: now,
-    binMinutes: BIN_MINUTES,
+    binMinutes,
     bins: Array.from(bins.values()).sort((a, b) => a.startAt - b.startAt),
   };
 }
@@ -501,8 +512,9 @@ export function buildTimeline(notes: readonly Note[], clusters: readonly Cluster
  * timeline は notes/clusters を書き終えた後に、読み出した値から再構築して最後に書く。
  * （途中でプロセスが落ちても、最悪 timeline が一世代古いままになるだけで済む）
  */
-export async function publishSnapshot(now: number = Date.now()): Promise<void> {
-  const { notes, clusters, searchlight, crossPosts } = await readSnapshot();
+export async function publishSnapshot(cfg: TenantConfig, now: number = Date.now()): Promise<void> {
+  const PATH = tenantPaths(cfg.slug);
+  const { notes, clusters, searchlight, crossPosts } = await readSnapshot(cfg.slug);
 
   // tweet_id(=postId) がマッチしたノートだけ searchlight を付ける。未マッチは付けない
   // （＝ JSON 形は従来と不変。UI は searchlight があるノートだけチップを出す）。
@@ -520,7 +532,7 @@ export async function publishSnapshot(now: number = Date.now()): Promise<void> {
   await writeJson(PATH.notes, notesFile);
   await writeJson(PATH.clusters, clustersFile);
 
-  const timeline = buildTimeline(notes, clusters, now);
+  const timeline = buildTimeline(notes, clusters, { monitorStartAt: cfg.monitorStartAt, binMinutes: cfg.binMinutes }, now);
   await writeJson(PATH.timeline, timeline);
 
   // 非X: notes/clusters/timeline とは独立したセクションなので整合性トランザクションは不要。

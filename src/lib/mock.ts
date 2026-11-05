@@ -1,6 +1,5 @@
-import { BIN_MINUTES } from "./constants";
-import { EVENT } from "./event";
-import { binStart, nextBin } from "./time";
+import type { PublicTenantConfig } from "./tenant/types";
+import { binStart, hhmm, nextBin } from "./time";
 import type {
   Cluster,
   ClustersFile,
@@ -22,6 +21,37 @@ import type {
 export function shouldUseMock(searchParamValue: string | string[] | undefined): boolean {
   const value = Array.isArray(searchParamValue) ? searchParamValue[0] : searchParamValue;
   return value === "1" && process.env.NODE_ENV !== "production";
+}
+
+const MOCK_OCCURRED_AT = Date.parse("2026-07-28T16:27:00+09:00");
+
+/**
+ * Blob に事例設定が無い手元環境で ?mock=1 を表示するための設定（熊本地震版の文言）。
+ * 実在の事例設定が読めるときはそちらを優先する（page.tsx）。
+ */
+export function mockPublicConfig(slug: string): PublicTenantConfig {
+  return {
+    slug,
+    siteTitle: "コミュニティノートタイムライン（モック）",
+    siteDescription: "モックデータによる表示確認用のページ。",
+    eyebrowLabel: "BirdXplorer コミュニティノート観測",
+    scheduleLabel: "2026年7月28日 16:27 発生（M7.1）",
+    monitorStartAt: binStart(MOCK_OCCURRED_AT - 3.45 * 60 * 60 * 1000, 30),
+    monitorEndDate: "2026-08-31",
+    keyMoments: [{ at: MOCK_OCCURRED_AT, markerLabel: `本震 ${hhmm(MOCK_OCCURRED_AT)}` }],
+    keyMomentLabel: "本震",
+    keyMomentValue: `M7.1 / ${hhmm(MOCK_OCCURRED_AT)}`,
+    issuesUrl: "https://github.com/codeforjapan/kumamoto-earthquake-dashboard/issues",
+    officialSourcesIntro: "地震・被害・避難に関する一次情報は",
+    officialSources: [
+      { label: "気象庁", url: "https://www.jma.go.jp/" },
+      { label: "熊本県", url: "https://www.pref.kumamoto.jp/" },
+    ],
+    officialSourcesDisclaimer: "本サイトは防災情報を提供するものではありません。",
+    binMinutes: 30,
+    status: "active",
+    hasSearchlight: true,
+  };
 }
 
 /** 決定的な疑似乱数(mulberry32)。毎回同じ形のデータを出すことでレビュー時の比較を安定させる。 */
@@ -350,19 +380,19 @@ function mockCrossPosts(generatedAt: number): CrossPostsFile {
 /**
  * 疑似データ一式を生成する。
  *
- * MONITOR_START_AT 〜 本震+30時間 の範囲で30分ビンを埋め、各ビンの強度に応じた件数の
+ * 最初の基準線（無ければ監視開始）の数時間前〜30時間後を事例のビン幅で埋め、各ビンの強度に応じた件数の
  * ノートを撒く。クラスタは13件用意し、うち1件はマージ済み(aliasOf)にして
  * resolveClusterId の解決経路もモック上で確認できるようにしている。
  */
-export function generateMock(): MockData {
+export function generateMock(cfg: PublicTenantConfig): MockData {
   const rand = mulberry32(20260728);
-  const generatedAt = EVENT.occurredAt + 30 * 60 * 60 * 1000;
+  const binMinutes = cfg.binMinutes;
+  const anchorAt = cfg.keyMoments[0]?.at ?? cfg.monitorStartAt;
+  const generatedAt = anchorAt + 30 * 60 * 60 * 1000;
 
-  // BLOB_READ_WRITE_TOKEN 等が無い環境でも動くよう、開始時刻は env() を参照せずモック専用に
-  // 算出する（env() は他の必須変数(KV等)まで要求するため）。EVENT.occurredAt より数時間前から
-  // 収集していた状態を再現できればよいので、発生時刻からの相対値で決める。
-  const monitorStartAt = binStart(EVENT.occurredAt - 3.45 * 60 * 60 * 1000);
-  const endAt = binStart(generatedAt);
+  // 基準線より数時間前から収集していた状態を再現できればよいので、基準線からの相対値で決める。
+  const monitorStartAt = binStart(anchorAt - 3.45 * 60 * 60 * 1000, binMinutes);
+  const endAt = binStart(generatedAt, binMinutes);
 
   // ── クラスタ ──
   // 意図的に `% 10` のままにしている(パレットは8色に縮小済み)。旧10色パレット時代に
@@ -391,8 +421,8 @@ export function generateMock(): MockData {
   // ── ノート ──
   const notes: Note[] = [];
   let noteSeq = 1;
-  for (let binAt = monitorStartAt; binAt <= endAt; binAt = nextBin(binAt)) {
-    const minutesSince = (binAt - EVENT.occurredAt) / 60000;
+  for (let binAt = monitorStartAt; binAt <= endAt; binAt = nextBin(binAt, binMinutes)) {
+    const minutesSince = (binAt - anchorAt) / 60000;
     const intensity = intensityAt(minutesSince);
     const count = Math.max(0, Math.round(intensity * 6 + (rand() - 0.5) * 2));
 
@@ -403,7 +433,7 @@ export function generateMock(): MockData {
       // 実運用の状態(aliasOf解決が必要なケース)を再現する。
       const clusterId =
         seedIndex === 5 && rand() < 0.3 ? mergedClusterId : clusters[seedIndex].id;
-      const createdAt = binAt + Math.floor(rand() * BIN_MINUTES * 60 * 1000);
+      const createdAt = binAt + Math.floor(rand() * binMinutes * 60 * 1000);
       const relevance = Math.round(40 + rand() * 60);
       const excluded = relevance < 60;
       const rateCount = Math.round(rand() * 12);
@@ -441,8 +471,8 @@ export function generateMock(): MockData {
 
   // ── タイムライン(notes から集計。ゼロ件のビンも欠落させず埋める) ──
   const bins: TimelineBin[] = [];
-  for (let binAt = monitorStartAt; binAt <= endAt; binAt = nextBin(binAt)) {
-    const binEnd = nextBin(binAt);
+  for (let binAt = monitorStartAt; binAt <= endAt; binAt = nextBin(binAt, binMinutes)) {
+    const binEnd = nextBin(binAt, binMinutes);
     const inBin = notes.filter((n) => !n.excluded && n.createdAt >= binAt && n.createdAt < binEnd);
     const counts: Record<string, number> = {};
     for (const n of inBin) {
@@ -478,7 +508,7 @@ export function generateMock(): MockData {
   return {
     notes: { generatedAt, notes },
     clusters: { generatedAt, clusters },
-    timeline: { generatedAt, binMinutes: BIN_MINUTES, bins },
+    timeline: { generatedAt, binMinutes, bins },
     report,
     crossPosts: mockCrossPosts(generatedAt),
   };

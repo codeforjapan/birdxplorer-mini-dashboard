@@ -16,20 +16,9 @@ const coreSchema = z.object({
     .default("https://dev.api-birdxplorer.code4japan.org")
     // 末尾スラッシュを剥がし、URL 結合時の // を防ぐ
     .transform((v) => v.replace(/\/+$/, "")),
-  RELEVANCE_THRESHOLD: z.coerce.number().int().min(0).max(100).default(60),
   BLOB_READ_WRITE_TOKEN: z.string().min(1),
   /** Neon の接続文字列。ノート・クラスタ・状態すべての真実がここにある。 */
   DATABASE_URL: z.string().min(1).startsWith("postgres"),
-  /** 監視開始時刻（epoch ms）。既定は 2026-07-28 13:00 JST。 */
-  MONITOR_START_AT: z.coerce
-    .number()
-    .int()
-    .default(Date.parse("2026-07-28T13:00:00+09:00")),
-  /** この日付（JST）を過ぎたら cron を no-op 化する。 */
-  MONITOR_END_DATE: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/)
-    .default("2026-08-31"),
 });
 
 const llmSchema = z.object({
@@ -39,6 +28,12 @@ const llmSchema = z.object({
 
 const cronSchema = z.object({
   CRON_SECRET: z.string().min(1),
+  /**
+   * 振り分け役が作業ルートを呼ぶ先（本番ドメイン）。req.url から取らないのは、
+   * Deployment Protection が all_except_custom_domains だとデプロイ固有 URL への
+   * 自己呼び出しが SSO で弾かれるため。
+   */
+  CRON_SELF_ORIGIN: z.url().transform((v) => v.replace(/\/+$/, "")),
 });
 
 const searchlightSchema = z.object({
@@ -78,8 +73,26 @@ export function llmEnv(): LlmEnv {
   return llmCache;
 }
 
+// 作業ルートは CRON_SELF_ORIGIN を使わないので、項目ごとに検証する（未設定で認証まで落とさない）
 export function cronSecret(): string {
-  return parse(cronSchema, "cron").CRON_SECRET;
+  return parse(cronSchema.pick({ CRON_SECRET: true }), "cron").CRON_SECRET;
+}
+
+export function cronSelfOrigin(): string {
+  return parse(cronSchema.pick({ CRON_SELF_ORIGIN: true }), "cron").CRON_SELF_ORIGIN;
+}
+
+/**
+ * ホスト名から事例を引く規則の元。検証・正規化は tenant/host.ts の parseHostRules が行い、
+ * 壊れた値でも例外にしない（proxy で全ページが落ちるのを避けるため）。
+ * - TENANT_PARENT_DOMAIN: 事例をサブドメインに持つ親ドメイン（例 dashboards.code4japan.org）
+ * - TENANT_HOST_ALIASES: JSON {"host":"slug"}。旧 .vercel.app やローカル開発用
+ */
+export function tenantHostEnv(): { TENANT_PARENT_DOMAIN?: string; TENANT_HOST_ALIASES?: string } {
+  return {
+    TENANT_PARENT_DOMAIN: process.env.TENANT_PARENT_DOMAIN,
+    TENANT_HOST_ALIASES: process.env.TENANT_HOST_ALIASES,
+  };
 }
 
 let searchlightCache: SearchlightEnv | undefined;
@@ -101,11 +114,3 @@ export function hasSearchlightConfig(): boolean {
   return searchlightSchema.safeParse(process.env).success;
 }
 
-/**
- * 運用期間を過ぎているか。cron ハンドラは真なら即 no-op で返す。
- * MONITOR_END_DATE の当日いっぱいまでは稼働させ、翌日 00:00 JST で停止する。
- */
-export function isMonitoringEnded(now: number = Date.now()): boolean {
-  const endExclusive = Date.parse(`${env().MONITOR_END_DATE}T00:00:00+09:00`) + 24 * 60 * 60 * 1000;
-  return now >= endExclusive;
-}

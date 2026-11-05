@@ -1,5 +1,6 @@
 import { list, put } from "@vercel/blob";
 import { env } from "./env";
+import { isValidSlug } from "./tenant/slug";
 
 /**
  * データ本体の置き場（公開読み取り）。
@@ -9,14 +10,26 @@ import { env } from "./env";
  * 永続URLも安定する。
  */
 
-export const PATH = {
-  notes: "data/notes.json",
-  timeline: "data/timeline.json",
-  clusters: "data/clusters.json",
-  crossPosts: "data/cross-posts.json",
-  dailyReport: (isoDay: string) => `reports/daily/${isoDay}.md`,
-  cumulativeReport: "reports/cumulative.md",
-} as const;
+/**
+ * 事例ごとの Blob パス。slug をそのままパスに埋め込むので、ここで形式を検証する
+ * （`../x` のような値で他の事例や共有領域を指させないため）。
+ */
+export function tenantPaths(slug: string) {
+  if (!isValidSlug(slug)) throw new Error(`不正な slug です: ${JSON.stringify(slug)}`);
+  const base = `tenants/${slug}`;
+  return {
+    notes: `${base}/data/notes.json`,
+    timeline: `${base}/data/timeline.json`,
+    clusters: `${base}/data/clusters.json`,
+    crossPosts: `${base}/data/cross-posts.json`,
+    dailyReport: (isoDay: string) => `${base}/reports/daily/${isoDay}.md`,
+    cumulativeReport: `${base}/reports/cumulative.md`,
+    config: `${base}/config.json`,
+  };
+}
+
+/** 事例一覧（dispatch が DB を起こさず監視中の事例を知るための公開スナップショット）。 */
+export const TENANT_INDEX_PATH = "tenants/index.json";
 
 /**
  * put() の cacheControlMaxAge（秒）。@vercel/blob は既定で1ヶ月キャッシュするが、
@@ -48,16 +61,20 @@ type ReadOptions = {
   revalidate?: number | false;
 };
 
-async function read(pathname: string, opts: ReadOptions = {}): Promise<string | null> {
-  const url = await resolveUrl(pathname);
-  if (!url) return null;
-
-  const res = await fetch(
+function fetchBlob(url: string, opts: ReadOptions): Promise<Response> {
+  return fetch(
     url,
     opts.revalidate === false
       ? { cache: "no-store" }
       : { next: { revalidate: opts.revalidate ?? 600 } },
   );
+}
+
+async function read(pathname: string, opts: ReadOptions = {}): Promise<string | null> {
+  const url = await resolveUrl(pathname);
+  if (!url) return null;
+
+  const res = await fetchBlob(url, opts);
   if (!res.ok) return null;
   return res.text();
 }
@@ -77,13 +94,32 @@ export async function readText(pathname: string, opts?: ReadOptions): Promise<st
   return read(pathname, opts);
 }
 
-export async function writeJson(pathname: string, value: unknown): Promise<string> {
+/**
+ * 「無い」と「読めない」を区別する読み取り。無いときだけ null を返し、HTTP エラーや通信失敗は例外にする。
+ * 読めなかったのを「無い」と扱うと困る呼び出し元（dispatch の事例一覧・公開設定）のためのもの。
+ */
+export async function readTextStrict(pathname: string, opts: ReadOptions = {}): Promise<string | null> {
+  const url = await resolveUrl(pathname);
+  if (!url) return null;
+
+  const res = await fetchBlob(url, opts);
+  // 一覧に出た直後の削除などで実体が消えている場合も「無い」
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Blob の読み取りに失敗: ${pathname} (HTTP ${res.status})`);
+  return res.text();
+}
+
+export async function writeJson(
+  pathname: string,
+  value: unknown,
+  opts: { maxAgeSeconds?: number } = {},
+): Promise<string> {
   const { url } = await put(pathname, JSON.stringify(value), {
     access: "public",
     contentType: "application/json; charset=utf-8",
     addRandomSuffix: false,
     allowOverwrite: true,
-    cacheControlMaxAge: SNAPSHOT_MAX_AGE,
+    cacheControlMaxAge: opts.maxAgeSeconds ?? SNAPSHOT_MAX_AGE,
     token: token(),
   });
   return url;
@@ -109,10 +145,12 @@ export async function writeText(
 }
 
 /** 日次ダイジェストの一覧（新しい順の "YYYY-MM-DD"）。アーカイブリンクの生成に使う。 */
-export async function listDailyReports(): Promise<string[]> {
-  const { blobs } = await list({ prefix: "reports/daily/", limit: 1000, token: token() });
+export async function listDailyReports(slug: string): Promise<string[]> {
+  // 接頭辞は tenantPaths 経由で作る（slug の検証を通し、他の事例の日次レポートを拾わない）
+  const prefix = tenantPaths(slug).dailyReport("").replace(/\.md$/, "");
+  const { blobs } = await list({ prefix, limit: 1000, token: token() });
   return blobs
-    .map((b) => b.pathname.match(/reports\/daily\/(\d{4}-\d{2}-\d{2})\.md$/)?.[1])
+    .map((b) => b.pathname.slice(prefix.length).match(/^(\d{4}-\d{2}-\d{2})\.md$/)?.[1])
     .filter((d): d is string => Boolean(d))
     .sort()
     .reverse();
